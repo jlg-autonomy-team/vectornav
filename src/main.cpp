@@ -97,12 +97,12 @@ int main(int argc, char *argv[])
     ros::NodeHandle n;
     ros::NodeHandle pn("~");
 
-    pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/IMU", 1000);
-    pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/Mag", 1000);
-    pubGPS = n.advertise<sensor_msgs::NavSatFix>("vectornav/GPS", 1000);
-    pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/Odom", 1000);
-    pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/Temp", 1000);
-    pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/Pres", 1000);
+    pubIMU = pn.advertise<sensor_msgs::Imu>("imu/data", 1000);
+    pubMag = pn.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
+    pubGPS = pn.advertise<sensor_msgs::NavSatFix>("global_position/raw/fix", 1000);
+    pubOdom = pn.advertise<nav_msgs::Odometry>("odom", 1000);
+    pubTemp = pn.advertise<sensor_msgs::Temperature>("imu/temperature", 1000);
+    pubPres = pn.advertise<sensor_msgs::FluidPressure>("imu/atm_pressure", 1000);
 
     resetOdomSrv = n.advertiseService("reset_odom", resetOdom);
 
@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
     int async_output_rate;
 
     // Load all params
-    pn.param<std::string>("frame_id", frame_id, "vectornav");
+    pn.param<std::string>("frame_id", frame_id, "imu_link");
     pn.param<bool>("tf_ned_to_enu", tf_ned_to_enu, false);
     pn.param<int>("async_output_rate", async_output_rate, 40);
     pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
