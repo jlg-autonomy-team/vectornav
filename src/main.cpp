@@ -40,10 +40,13 @@
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres;
 ros::ServiceServer resetOdomSrv;
 
-//Unused covariances initilized to zero's
+// Unused covariances initilized to zero's
 boost::array<double, 9ul> linear_accel_covariance = { };
 boost::array<double, 9ul> angular_vel_covariance = { };
 boost::array<double, 9ul> orientation_covariance = { };
+// Default rotation referenceframe, to set different mounting positions
+boost::array<double, 9ul> rotation_reference_frame = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+
 XmlRpc::XmlRpcValue rpc_temp;
 
 // Include this header file to get access to VectorNav sensors.
@@ -81,7 +84,12 @@ boost::array<double, 9ul> setCov(XmlRpc::XmlRpcValue rpc){
     }
     return output;
 }
-
+// Basic loop so we can initialize our rotation referenceframe
+boost::array<double, 9ul> setRotationFrame(XmlRpc::XmlRpcValue rpc){
+  // as we are using now a 3x3 matrix, as in the covariance reading, 
+  // and that method was inherited, reuse it
+  return setCov(rpc);
+}
 // Reset initial position to current position
 bool resetOdom(std_srvs::Empty::Request &req, std_srvs::Empty::Response &resp)
 {
@@ -111,6 +119,9 @@ int main(int argc, char *argv[])
     int SensorBaudrate;
     int async_output_rate;
 
+    // If has read a rotation referenceframe
+    bool has_rotation_reference_frame = false;
+
     // Load all params
     pn.param<std::string>("frame_id", frame_id, "imu_link");
     pn.param<bool>("tf_ned_to_enu", tf_ned_to_enu, false);
@@ -131,6 +142,12 @@ int main(int argc, char *argv[])
     {
         orientation_covariance = setCov(rpc_temp);
     }
+    if(pn.getParam("rotation_reference_frame",rpc_temp))
+    {
+       rotation_reference_frame = setRotationFrame(rpc_temp);
+       has_rotation_reference_frame = true;
+    }
+
 
     ROS_INFO("Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
 
@@ -198,6 +215,7 @@ int main(int argc, char *argv[])
     string mn = vs.readModelNumber();
     ROS_INFO("Model Number: %s", mn.c_str());
 
+
     // Set Data output Freq [Hz]
     vs.writeAsyncDataOutputFrequency(async_output_rate);
 
@@ -224,6 +242,32 @@ int main(int argc, char *argv[])
 
     // Set Data output Freq [Hz]
     vs.writeAsyncDataOutputFrequency(async_output_rate);
+    
+    // Setting reference frame
+    vn::math::mat3f current_rotation_reference_frame;
+    current_rotation_reference_frame = vs.readReferenceFrameRotation();
+    ROS_INFO_STREAM("Current rotation reference frame: " << current_rotation_reference_frame);
+
+    if (has_rotation_reference_frame == true) {
+      vn::math::mat3f matrix_rotation_reference_frame;
+      matrix_rotation_reference_frame.e00 = rotation_reference_frame[0];
+      matrix_rotation_reference_frame.e01 = rotation_reference_frame[1];
+      matrix_rotation_reference_frame.e02 = rotation_reference_frame[2];
+      matrix_rotation_reference_frame.e10 = rotation_reference_frame[3];
+      matrix_rotation_reference_frame.e11 = rotation_reference_frame[4];
+      matrix_rotation_reference_frame.e12 = rotation_reference_frame[5];
+      matrix_rotation_reference_frame.e20 = rotation_reference_frame[6];
+      matrix_rotation_reference_frame.e21 = rotation_reference_frame[7];
+      matrix_rotation_reference_frame.e22 = rotation_reference_frame[8];
+      ROS_INFO_STREAM("Setting rotation reference frame to: " << matrix_rotation_reference_frame);
+      vs.writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
+      current_rotation_reference_frame = vs.readReferenceFrameRotation();
+      ROS_INFO_STREAM("Current rotation reference frame: " << current_rotation_reference_frame);
+      vs.writeSettings(true);
+      vs.reset();
+    } 
+    
+    // Register callback for data now
     vs.registerAsyncPacketReceivedHandler(NULL, BinaryAsyncMessageReceived);
 
     // You spin me right round, baby

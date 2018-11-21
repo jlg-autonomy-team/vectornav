@@ -29,9 +29,11 @@ angular_vel_covariance: [0.01,  0.0,   0.0,
 
 # Orientation covariance overwritten in driver, this is included just as an extra
 orientation_covariance: [0.01,  0.0,   0.0,
-                            0.0,   0.01,  0.0,
-                            0.0,   0.0,   0.01]
+                         0.0,   0.01,  0.0,
+                         0.0,   0.0,   0.01]
 
-
-
-
+# Rotation of reference_frame, so sensor can be mounted in different orientation.
+# Can also be used to correct mounting errors
+rotation_reference_frame: [ 1.0,  0.0,  0.0,
+                            0.0, -1.0,  0.0,
+                            0.0,  0.0, -1.0] 
