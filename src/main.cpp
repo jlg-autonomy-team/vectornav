@@ -163,6 +163,15 @@ int main(int argc, char *argv[])
         // Make this variable only accessible in the while loop
         static int i = 0;
         defaultBaudrate = vs.supportedBaudrates()[i];
+        
+        // original driver looped through possible baudrates and then switched to the 
+        // desired one. I don't know why it is done like this, but with this check we
+        // can skip to the desired without touching the rest of the code
+        if (defaultBaudrate != SensorBaudrate) {
+          i++;
+          continue;
+        }
+
         ROS_INFO("Connecting with default at %d", defaultBaudrate);
         // Default response was too low and retransmit time was too long by default.
         // They would cause errors
