@@ -309,10 +309,10 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
         if (tf_ned_to_enu)
         {
             // Flip x and y then invert z
-            msgIMU.orientation.x = q[1];
-            msgIMU.orientation.y = q[0];
-            msgIMU.orientation.z = -q[2];
-            msgIMU.orientation.w = q[3];
+            msgIMU.orientation.x = -q[3];//   q[1];
+            msgIMU.orientation.y = q[2];//   q[0];
+            msgIMU.orientation.z = -q[1];//   -q[2];
+            msgIMU.orientation.w = q[0];//   q[3];
 
             if (cd.hasAttitudeUncertainty())
             {
@@ -322,13 +322,13 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
                 msgIMU.orientation_covariance[8] = orientationStdDev[2]*orientationStdDev[2]*PI/180; // Convert to radians Yaw
             }
             // Flip x and y then invert z
-            msgIMU.angular_velocity.x = ar[1];
-            msgIMU.angular_velocity.y = ar[0];
-            msgIMU.angular_velocity.z = -ar[2];
+            msgIMU.angular_velocity.x = ar[0];
+            msgIMU.angular_velocity.y = ar[1];
+            msgIMU.angular_velocity.z = ar[2];
             // Flip x and y then invert z
-            msgIMU.linear_acceleration.x = al[1];
-            msgIMU.linear_acceleration.y = al[0];
-            msgIMU.linear_acceleration.z = -al[2];
+            msgIMU.linear_acceleration.x = al[0];
+            msgIMU.linear_acceleration.y = al[1];
+            msgIMU.linear_acceleration.z = al[2];
         }
         else
         {
