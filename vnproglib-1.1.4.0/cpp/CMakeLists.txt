@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.4)
-project(vncxx CXX)
+project(libvncxx CXX)
 
 set(CMAKE_SUPPRESS_REGENERATION TRUE)
 #add_definitions(-DPL150)
@@ -72,9 +72,9 @@ set(SOURCE
 include_directories(
     include)
 
-add_library(vncxx ${SOURCE})
+add_library(libvncxx ${SOURCE})
 
-install(TARGETS vncxx
+install(TARGETS libvncxx
    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
