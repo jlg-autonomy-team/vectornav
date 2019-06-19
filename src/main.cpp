@@ -62,6 +62,8 @@ using namespace vn::xplat;
 
 // Method declarations for future use.
 void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index);
+bool ValidateQuaternion(vec4f q);
+bool ValidateVector(vec3f *);
 
 std::string frame_id;
 // Boolean to use ned or enu frame. Defaults to enu which is data format from sensor.
@@ -295,6 +297,17 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+bool ValidateQuaternion(vec4f q)
+{
+    return std::isfinite(q[0]) and std::isfinite(q[1]) and std::isfinite(q[2]) and std::isfinite(q[3])
+    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) < 0.01);
+}
+
+bool ValidateVector(vec3f v)
+{
+    return std::isfinite(v[0]) and std::isfinite(v[1]) and std::isfinite(v[2]);
+}
+
 //
 // Callback function to process data packet from sensor
 //
@@ -309,61 +322,68 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
 
     if (cd.hasQuaternion() && cd.hasAngularRate() && cd.hasAcceleration())
     {
-
         vec4f q = cd.quaternion();
         vec3f ar = cd.angularRate();
         vec3f al = cd.acceleration();
-
-        //Quaternion message comes in as a Yaw (z) Pitch (y) Roll (x) format
-        if (tf_ned_to_enu)
+        
+        if (ValidateQuaternion(q) and ValidateVector(ar) and ValidateVector(al))
         {
-            // Flip x and y then invert z
-            msgIMU.orientation.x = -q[3];//   q[1];
-            msgIMU.orientation.y = q[2];//   q[0];
-            msgIMU.orientation.z = -q[1];//   -q[2];
-            msgIMU.orientation.w = q[0];//   q[3];
-
-            if (cd.hasAttitudeUncertainty())
+            //Quaternion message comes in as a Yaw (z) Pitch (y) Roll (x) format
+            if (tf_ned_to_enu)
             {
-                vec3f orientationStdDev = cd.attitudeUncertainty();
-                msgIMU.orientation_covariance[0] = orientationStdDev[1]*orientationStdDev[1]*PI/180; // Convert to radians Pitch
-                msgIMU.orientation_covariance[4] = orientationStdDev[0]*orientationStdDev[0]*PI/180; // Convert to radians Roll
-                msgIMU.orientation_covariance[8] = orientationStdDev[2]*orientationStdDev[2]*PI/180; // Convert to radians Yaw
+                // Flip x and y then invert z
+                msgIMU.orientation.x = -q[3];//   q[1];
+                msgIMU.orientation.y = q[2];//   q[0];
+                msgIMU.orientation.z = -q[1];//   -q[2];
+                msgIMU.orientation.w = q[0];//   q[3];
+
+                if (cd.hasAttitudeUncertainty())
+                {
+                    vec3f orientationStdDev = cd.attitudeUncertainty();
+                    msgIMU.orientation_covariance[0] = orientationStdDev[1]*orientationStdDev[1]*PI/180; // Convert to radians Pitch
+                    msgIMU.orientation_covariance[4] = orientationStdDev[0]*orientationStdDev[0]*PI/180; // Convert to radians Roll
+                    msgIMU.orientation_covariance[8] = orientationStdDev[2]*orientationStdDev[2]*PI/180; // Convert to radians Yaw
+                }
+                // Flip x and y then invert z
+                msgIMU.angular_velocity.x = ar[0];
+                msgIMU.angular_velocity.y = ar[1];
+                msgIMU.angular_velocity.z = ar[2];
+                // Flip x and y then invert z
+                msgIMU.linear_acceleration.x = al[0];
+                msgIMU.linear_acceleration.y = al[1];
+                msgIMU.linear_acceleration.z = al[2];
             }
-            // Flip x and y then invert z
-            msgIMU.angular_velocity.x = ar[0];
-            msgIMU.angular_velocity.y = ar[1];
-            msgIMU.angular_velocity.z = ar[2];
-            // Flip x and y then invert z
-            msgIMU.linear_acceleration.x = al[0];
-            msgIMU.linear_acceleration.y = al[1];
-            msgIMU.linear_acceleration.z = al[2];
+            else
+            {
+                msgIMU.orientation.x = q[0];
+                msgIMU.orientation.y = q[1];
+                msgIMU.orientation.z = q[2];
+                msgIMU.orientation.w = q[3];
+
+                if (cd.hasAttitudeUncertainty())
+                {
+                    vec3f orientationStdDev = cd.attitudeUncertainty();
+                    msgIMU.orientation_covariance[0] = orientationStdDev[2]*orientationStdDev[2]*PI/180; // Convert to radians Roll
+                    msgIMU.orientation_covariance[4] = orientationStdDev[1]*orientationStdDev[1]*PI/180; // Convert to radians Pitch
+                    msgIMU.orientation_covariance[8] = orientationStdDev[0]*orientationStdDev[0]*PI/180; // Convert to radians Yaw
+                }
+                msgIMU.angular_velocity.x = ar[0];
+                msgIMU.angular_velocity.y = ar[1];
+                msgIMU.angular_velocity.z = ar[2];
+                msgIMU.linear_acceleration.x = al[0];
+                msgIMU.linear_acceleration.y = al[1];
+                msgIMU.linear_acceleration.z = al[2];
+            }
+            // Covariances pulled from parameters
+            msgIMU.angular_velocity_covariance = angular_vel_covariance;
+            msgIMU.linear_acceleration_covariance = linear_accel_covariance;
+            pubIMU.publish(msgIMU);
         }
         else
         {
-            msgIMU.orientation.x = q[0];
-            msgIMU.orientation.y = q[1];
-            msgIMU.orientation.z = q[2];
-            msgIMU.orientation.w = q[3];
-
-            if (cd.hasAttitudeUncertainty())
-            {
-                vec3f orientationStdDev = cd.attitudeUncertainty();
-                msgIMU.orientation_covariance[0] = orientationStdDev[2]*orientationStdDev[2]*PI/180; // Convert to radians Roll
-                msgIMU.orientation_covariance[4] = orientationStdDev[1]*orientationStdDev[1]*PI/180; // Convert to radians Pitch
-                msgIMU.orientation_covariance[8] = orientationStdDev[0]*orientationStdDev[0]*PI/180; // Convert to radians Yaw
-            }
-            msgIMU.angular_velocity.x = ar[0];
-            msgIMU.angular_velocity.y = ar[1];
-            msgIMU.angular_velocity.z = ar[2];
-            msgIMU.linear_acceleration.x = al[0];
-            msgIMU.linear_acceleration.y = al[1];
-            msgIMU.linear_acceleration.z = al[2];
+            ROS_WARN_THROTTLE(1, "Invalid data. Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
+                                  q[0], q[1], q[2], q[3], ar[0], ar[1], ar[2], al[0], al[1], al[2]);
         }
-        // Covariances pulled from parameters
-        msgIMU.angular_velocity_covariance = angular_vel_covariance;
-        msgIMU.linear_acceleration_covariance = linear_accel_covariance;
-        pubIMU.publish(msgIMU);
     }
 
     // Magnetic Field
