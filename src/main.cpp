@@ -64,6 +64,7 @@ using namespace vn::xplat;
 void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index);
 bool ValidateQuaternion(vec4f q);
 bool ValidateVector(vec3f *);
+int invalid_data = 0;
 
 std::string frame_id;
 // Boolean to use ned or enu frame. Defaults to enu which is data format from sensor.
@@ -326,7 +327,13 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
         vec3f ar = cd.angularRate();
         vec3f al = cd.acceleration();
         
-        if (ValidateQuaternion(q) and ValidateVector(ar) and ValidateVector(al))
+        if (not ValidateQuaternion(q) or not ValidateVector(ar) or not ValidateVector(al))
+        {
+            invalid_data++;
+            ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f", invalid_data
+                                  q[0], q[1], q[2], q[3], ar[0], ar[1], ar[2], al[0], al[1], al[2]);
+        }
+        else
         {
             //Quaternion message comes in as a Yaw (z) Pitch (y) Roll (x) format
             if (tf_ned_to_enu)
@@ -378,11 +385,6 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
             msgIMU.angular_velocity_covariance = angular_vel_covariance;
             msgIMU.linear_acceleration_covariance = linear_accel_covariance;
             pubIMU.publish(msgIMU);
-        }
-        else
-        {
-            ROS_WARN_THROTTLE(1, "Invalid data. Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
-                                  q[0], q[1], q[2], q[3], ar[0], ar[1], ar[2], al[0], al[1], al[2]);
         }
     }
 
