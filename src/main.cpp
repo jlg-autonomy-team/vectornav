@@ -300,7 +300,7 @@ int main(int argc, char *argv[])
 bool ValidateQuaternion(vec4f q)
 {
     return std::isfinite(q[0]) and std::isfinite(q[1]) and std::isfinite(q[2]) and std::isfinite(q[3])
-    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]) < 0.01);
+    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3] - 1.0f) < 0.01);
 }
 
 bool ValidateVector(vec3f v)
