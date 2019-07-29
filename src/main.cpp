@@ -327,12 +327,9 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
     if (not ValidateQuaternion(q) or not ValidateVector(ar) or not ValidateVector(al))
     {
       invalid_data++;
-      ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: % f, % f, % f, % f.
-                        Angular velocity
-                        : % f, % f, % f.Linear Acceleration
-                        : % f, % f, % f ",
-                                        invalid_data,
-                          q[0], q[1], q[2], q[3], ar[0], ar[1], ar[2], al[0], al[1], al[2]);
+      ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f .Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f ",
+                        invalid_data, q[0], q[1], q[2], q[3], 
+                        ar[0], ar[1], ar[2], al[0], al[1], al[2]);
     }
     else
     {
