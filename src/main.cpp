@@ -72,6 +72,7 @@ bool tf_ned_to_enu;
 // Initial position after getting a GPS fix.
 vec3d initial_position;
 bool initial_position_set = false;
+bool initialize = false;
 
 // Basic loop so we can initilize our covariance parameters above
 boost::array<double, 9ul> setCov(XmlRpc::XmlRpcValue rpc)
@@ -133,6 +134,7 @@ int main(int argc, char* argv[])
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
   pn.param<int>("serial_baud", SensorBaudrate, 115200);
+  pn.param<bool>("initialize", initialize, false);
 
   // Call to set covariances
   if (pn.getParam("linear_accel_covariance", rpc_temp))
@@ -172,11 +174,16 @@ int main(int argc, char* argv[])
     // original driver looped through possible baudrates and then switched to the
     // desired one. I don't know why it is done like this, but with this check we
     // can skip to the desired without touching the rest of the code
-    if (defaultBaudrate != SensorBaudrate)
+    // The first time using the device the baudrate must be initialized.
+    // Otherwise the default baudrate can be applied directly
+    
+    
+    if (!initialize && defaultBaudrate != SensorBaudrate)
     {
       i++;
       continue;
     }
+
 
     ROS_INFO("Connecting with default at %d", defaultBaudrate);
     // Default response was too low and retransmit time was too long by default.
