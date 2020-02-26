@@ -1,5 +1,5 @@
 # Defined in udev rules, change according to your system. Typically /dev/ttyUSB0
-serial_port: /dev/ttyUSB_VECTORNAV
+serial_port: /dev/ttyUSB_IMU
 
 # To configure baudrate the sensor must be initialized the first time.
 initialize: false
