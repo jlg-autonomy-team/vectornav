@@ -227,9 +227,12 @@ int main(int argc, char *argv[])
         ROS_WARN("9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
         ROS_WARN("With the test IMU 128000 did not work, all others worked fine.");
     }
-    // Query the sensor's model number.
-    string mn = vs.readModelNumber();
-    ROS_INFO("Model Number: %s", mn.c_str());
+    
+    // Query sensor information
+    ROS_INFO("Model Number: %s", vs.readModelNumber().c_str());
+    ROS_INFO("Hardware Revision: %d", vs.readHardwareRevision());
+    ROS_INFO("Serial Number: %d", vs.readSerialNumber());
+    ROS_INFO("Firmware Version: %s", vs.readFirmwareVersion().c_str());
 
 
     // Set Data output Freq [Hz]
