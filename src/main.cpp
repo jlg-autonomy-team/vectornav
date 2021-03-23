@@ -122,6 +122,7 @@ int main(int argc, char *argv[])
     string SensorPort;
     int SensorBaudrate;
     int async_output_rate;
+    int max_invalid_packets;
 
     // If has read a rotation referenceframe
     bool has_rotation_reference_frame = false;
@@ -133,6 +134,7 @@ int main(int argc, char *argv[])
     pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
     pn.param<int>("serial_baud", SensorBaudrate, 115200);
     pn.param<bool>("initialize", initialize, false);
+    pn.param<int>("max_invalid_packets", max_invalid_packets, 500);
 
     //Call to set covariances
     if(pn.getParam("linear_accel_covariance",rpc_temp))
@@ -340,9 +342,17 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
             ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
                         invalid_data, q[0], q[1], q[2], q[3],
                         ar[0], ar[1], ar[2], al[0], al[1], al[2]);
+
+            // Shutdown node if more than max_invalid_packets are received consecutively
+            if (invalid_data >= max_invalid_packets)
+            {
+              ros::shutdown();
+            }
         }
         else
         {
+            invalid_data = 0;
+
             //Quaternion message comes in as a Yaw (z) Pitch (y) Roll (x) format
             if (tf_ned_to_enu)
             {
