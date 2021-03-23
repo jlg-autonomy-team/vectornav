@@ -73,6 +73,7 @@ bool tf_ned_to_enu;
 vec3d initial_position;
 bool initial_position_set = false;
 bool initialize = false;
+int max_invalid_packets = -1;
 
 // Basic loop so we can initilize our covariance parameters above
 boost::array<double, 9ul> setCov(XmlRpc::XmlRpcValue rpc){
@@ -122,7 +123,6 @@ int main(int argc, char *argv[])
     string SensorPort;
     int SensorBaudrate;
     int async_output_rate;
-    int max_invalid_packets;
 
     // If has read a rotation referenceframe
     bool has_rotation_reference_frame = false;
@@ -344,7 +344,7 @@ void BinaryAsyncMessageReceived(void* userData, Packet& p, size_t index)
                         ar[0], ar[1], ar[2], al[0], al[1], al[2]);
 
             // Shutdown node if more than max_invalid_packets are received consecutively
-            if (invalid_data >= max_invalid_packets)
+            if ((max_invalid_packets != -1) && (invalid_data >= max_invalid_packets))
             {
               ros::shutdown();
             }
