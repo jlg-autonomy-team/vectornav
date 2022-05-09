@@ -61,6 +61,9 @@ using namespace vn::xplat;
 
 // Method declarations for future use.
 void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index);
+bool ValidateQuaternion(vec4f q);
+bool ValidateVector(vec3f *);
+int invalid_data = 0;
 
 // Custom user data to pass to packet callback function
 struct UserData
@@ -157,13 +160,13 @@ int main(int argc, char * argv[])
   ros::NodeHandle n;
   ros::NodeHandle pn("~");
 
-  pubIMU = n.advertise<sensor_msgs::Imu>("vectornav/IMU", 1000);
-  pubMag = n.advertise<sensor_msgs::MagneticField>("vectornav/Mag", 1000);
-  pubGPS = n.advertise<sensor_msgs::NavSatFix>("vectornav/GPS", 1000);
-  pubOdom = n.advertise<nav_msgs::Odometry>("vectornav/Odom", 1000);
-  pubTemp = n.advertise<sensor_msgs::Temperature>("vectornav/Temp", 1000);
-  pubPres = n.advertise<sensor_msgs::FluidPressure>("vectornav/Pres", 1000);
-  pubIns = n.advertise<vectornav::Ins>("vectornav/INS", 1000);
+  pubIMU = n.advertise<sensor_msgs::Imu>("imu/data", 1000);
+  pubMag = n.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
+  pubGPS = n.advertise<sensor_msgs::NavSatFix>("imu/global_position/raw/fix", 1000);
+  pubOdom = n.advertise<nav_msgs::Odometry>("imu/odom", 1000);
+  pubTemp = n.advertise<sensor_msgs::Temperature>("imu/temperature", 1000);
+  pubPres = n.advertise<sensor_msgs::FluidPressure>("imu/atm_pressure", 1000);
+  pubIns = n.advertise<vectornav::Ins>("imu/INS", 1000);
 
   resetOdomSrv = n.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
     "reset_odom", boost::bind(&resetOdom, _1, _2, &user_data));
@@ -342,7 +345,7 @@ int main(int argc, char * argv[])
 }
 
 //Helper function to create IMU message
-void fill_imu_message(
+bool fill_imu_message(
   sensor_msgs::Imu & msgIMU, vn::sensors::CompositeData & cd, ros::Time & time,
   UserData * user_data)
 {
@@ -364,73 +367,86 @@ void fill_imu_message(
         pow(orientationStdDev[0] * M_PI / 180, 2);  // Convert to radians Yaw
     }
 
-    //Quaternion message comes in as a Yaw (z) pitch (y) Roll (x) format
-    if (user_data->tf_ned_to_enu) {
-      // If we want the orientation to be based on the reference label on the imu
-      tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
-      geometry_msgs::Quaternion quat_msg;
+    if (not ValidateQuaternion(q) or not ValidateVector(ar) or not ValidateVector(al))
+    {
+        invalid_data++;
+        ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
+                    invalid_data, q[0], q[1], q[2], q[3],
+                    ar[0], ar[1], ar[2], al[0], al[1], al[2]);
+        return false;
+    }
 
-      if (user_data->frame_based_enu) {
-        // Create a rotation from NED -> ENU
-        tf2::Quaternion q_rotate;
-        q_rotate.setRPY(M_PI, 0.0, M_PI / 2);
-        // Apply the NED to ENU rotation such that the coordinate frame matches
-        tf2_quat = q_rotate * tf2_quat;
-        quat_msg = tf2::toMsg(tf2_quat);
+    else
+    {
+      //Quaternion message comes in as a Yaw (z) pitch (y) Roll (x) format
+      if (user_data->tf_ned_to_enu) {
+        // If we want the orientation to be based on the reference label on the imu
+        tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
+        geometry_msgs::Quaternion quat_msg;
 
-        // Since everything is in the normal frame, no flipping required
+        if (user_data->frame_based_enu) {
+          // Create a rotation from NED -> ENU
+          tf2::Quaternion q_rotate;
+          q_rotate.setRPY(M_PI, 0.0, M_PI / 2);
+          // Apply the NED to ENU rotation such that the coordinate frame matches
+          tf2_quat = q_rotate * tf2_quat;
+          quat_msg = tf2::toMsg(tf2_quat);
+
+          // Since everything is in the normal frame, no flipping required
+          msgIMU.angular_velocity.x = ar[0];
+          msgIMU.angular_velocity.y = ar[1];
+          msgIMU.angular_velocity.z = ar[2];
+
+          msgIMU.linear_acceleration.x = al[0];
+          msgIMU.linear_acceleration.y = al[1];
+          msgIMU.linear_acceleration.z = al[2];
+        } else {
+          // put into ENU - swap X/Y, invert Z
+          quat_msg.x = q[1];
+          quat_msg.y = q[0];
+          quat_msg.z = -q[2];
+          quat_msg.w = q[3];
+
+          // Flip x and y then invert z
+          msgIMU.angular_velocity.x = ar[1];
+          msgIMU.angular_velocity.y = ar[0];
+          msgIMU.angular_velocity.z = -ar[2];
+          // Flip x and y then invert z
+          msgIMU.linear_acceleration.x = al[1];
+          msgIMU.linear_acceleration.y = al[0];
+          msgIMU.linear_acceleration.z = -al[2];
+
+          if (cd.hasAttitudeUncertainty()) {
+            vec3f orientationStdDev = cd.attitudeUncertainty();
+            msgIMU.orientation_covariance[0] =
+              pow(orientationStdDev[1] * M_PI / 180, 2);  // Convert to radians pitch
+            msgIMU.orientation_covariance[4] =
+              pow(orientationStdDev[0] * M_PI / 180, 2);  // Convert to radians Roll
+            msgIMU.orientation_covariance[8] =
+              pow(orientationStdDev[2] * M_PI / 180, 2);  // Convert to radians Yaw
+          }
+        }
+
+        msgIMU.orientation = quat_msg;
+      } else {
+        msgIMU.orientation.x = q[0];
+        msgIMU.orientation.y = q[1];
+        msgIMU.orientation.z = q[2];
+        msgIMU.orientation.w = q[3];
+
         msgIMU.angular_velocity.x = ar[0];
         msgIMU.angular_velocity.y = ar[1];
         msgIMU.angular_velocity.z = ar[2];
-
         msgIMU.linear_acceleration.x = al[0];
         msgIMU.linear_acceleration.y = al[1];
         msgIMU.linear_acceleration.z = al[2];
-      } else {
-        // put into ENU - swap X/Y, invert Z
-        quat_msg.x = q[1];
-        quat_msg.y = q[0];
-        quat_msg.z = -q[2];
-        quat_msg.w = q[3];
-
-        // Flip x and y then invert z
-        msgIMU.angular_velocity.x = ar[1];
-        msgIMU.angular_velocity.y = ar[0];
-        msgIMU.angular_velocity.z = -ar[2];
-        // Flip x and y then invert z
-        msgIMU.linear_acceleration.x = al[1];
-        msgIMU.linear_acceleration.y = al[0];
-        msgIMU.linear_acceleration.z = -al[2];
-
-        if (cd.hasAttitudeUncertainty()) {
-          vec3f orientationStdDev = cd.attitudeUncertainty();
-          msgIMU.orientation_covariance[0] =
-            pow(orientationStdDev[1] * M_PI / 180, 2);  // Convert to radians pitch
-          msgIMU.orientation_covariance[4] =
-            pow(orientationStdDev[0] * M_PI / 180, 2);  // Convert to radians Roll
-          msgIMU.orientation_covariance[8] =
-            pow(orientationStdDev[2] * M_PI / 180, 2);  // Convert to radians Yaw
-        }
       }
-
-      msgIMU.orientation = quat_msg;
-    } else {
-      msgIMU.orientation.x = q[0];
-      msgIMU.orientation.y = q[1];
-      msgIMU.orientation.z = q[2];
-      msgIMU.orientation.w = q[3];
-
-      msgIMU.angular_velocity.x = ar[0];
-      msgIMU.angular_velocity.y = ar[1];
-      msgIMU.angular_velocity.z = ar[2];
-      msgIMU.linear_acceleration.x = al[0];
-      msgIMU.linear_acceleration.y = al[1];
-      msgIMU.linear_acceleration.z = al[2];
+      // Covariances pulled from parameters
+      msgIMU.angular_velocity_covariance = user_data->angular_vel_covariance;
+      msgIMU.linear_acceleration_covariance = user_data->linear_accel_covariance;
     }
-    // Covariances pulled from parameters
-    msgIMU.angular_velocity_covariance = user_data->angular_vel_covariance;
-    msgIMU.linear_acceleration_covariance = user_data->linear_accel_covariance;
   }
+  return true;
 }
 
 //Helper function to create magnetic field message
@@ -766,8 +782,10 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   // IMU
   if ((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) {
     sensor_msgs::Imu msgIMU;
-    fill_imu_message(msgIMU, cd, time, user_data);
-    pubIMU.publish(msgIMU);
+    if (fill_imu_message(msgIMU, cd, time, user_data) == true)
+    {
+      pubIMU.publish(msgIMU);
+    }
   }
 
   if ((pkg_count % user_data->output_stride) == 0) {
@@ -820,4 +838,15 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
     }
   }
   pkg_count += 1;
+}
+
+bool ValidateQuaternion(vec4f q)
+{
+    return std::isfinite(q[0]) and std::isfinite(q[1]) and std::isfinite(q[2]) and std::isfinite(q[3])
+    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3] - 1.0f) < 0.01);
+}
+
+bool ValidateVector(vec3f v)
+{
+    return std::isfinite(v[0]) and std::isfinite(v[1]) and std::isfinite(v[2]);
 }

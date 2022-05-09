@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8.3)
 # Compile options so compiles with ROS Kinetic
-# Future releases may want to 
+# Future releases may want to
 add_compile_options(-std=c++11)
 project(vectornav)
 
@@ -59,4 +59,14 @@ install(TARGETS vnpub
    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+  FILES_MATCHING PATTERN "*.launch"
+)
+
+install(DIRECTORY config/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
+  FILES_MATCHING PATTERN "*.yaml"
 )
