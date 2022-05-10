@@ -28,6 +28,9 @@ tf_ned_to_enu: true
 # If tf_ned_to_enu = true and frame_based_enu = true we rotate the quaternion to the frame matched label by multiplication
 frame_based_enu: true
 
+# Number of consecutive invalid data packets allowed before shutting node down. Use -1 to deactivate this feature
+max_invalid_packets: 500
+
 # Make sure all covariances below are of type xx.xx , i.e. double so that the rpc is parsed correctly
 
 # Linear Acceleration Covariances not produced by the sensor
