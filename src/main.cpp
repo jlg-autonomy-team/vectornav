@@ -62,7 +62,7 @@ using namespace vn::xplat;
 // Method declarations for future use.
 void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index);
 bool ValidateQuaternion(vec4f q);
-bool ValidateVector(vec3f *);
+bool ValidateVector(vec3f v);
 int invalid_data = 0;
 
 // Custom user data to pass to packet callback function
