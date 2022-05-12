@@ -20,13 +20,13 @@ map_frame_id: map
 frame_id: imu_link
 
 # Data publication form, true for East North Up or false for North East Down <- false is default setting
-tf_ned_to_enu: true
+tf_ned_to_enu: false
 
 # If publishing ENU, do we want to publish in the frame labeled on the device? Default is false.
 # If tf_ned_to_enu = true and frame_based_enu = false orientation is reported by: x->y y->x z->-z to rotate the quaternion
 # Proper method is to rotate the quaternion by multiplication
 # If tf_ned_to_enu = true and frame_based_enu = true we rotate the quaternion to the frame matched label by multiplication
-frame_based_enu: true
+frame_based_enu: false
 
 # Number of consecutive invalid data packets allowed before shutting node down. Use -1 to deactivate this feature
 max_invalid_packets: 500
@@ -47,3 +47,10 @@ angular_vel_covariance: [0.01,  0.0,   0.0,
 orientation_covariance: [0.01,  0.0,   0.0,
                             0.0,   0.01,  0.0,
                             0.0,   0.0,   0.01]
+
+# Rotation of reference_frame, so sensor can be mounted in different orientation.
+# Can also be used to correct mounting errors
+# Use default values (1,-1,-1) to translate original publication frame (NED) to ROS reference frame (NWU)
+rotation_reference_frame: [ 1.0,  0.0,  0.0,
+                            0.0, -1.0,  0.0,
+                            0.0,  0.0, -1.0]
