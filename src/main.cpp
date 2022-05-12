@@ -360,7 +360,12 @@ int main(int argc, char * argv[])
     matrix_rotation_reference_frame.e21 = user_data.rotation_reference_frame[7];
     matrix_rotation_reference_frame.e22 = user_data.rotation_reference_frame[8];
 
-    if (current_rotation_reference_frame != matrix_rotation_reference_frame) {
+    // Check diagonal to determine if the matrix is different, the rest of the values should be 0
+    // There is no method to compare matrices directly
+    if (current_rotation_reference_frame.e00 != matrix_rotation_reference_frame.e00
+      || current_rotation_reference_frame.e11 != matrix_rotation_reference_frame.e11
+      || current_rotation_reference_frame.e22 != matrix_rotation_reference_frame.e22)
+    {
       ROS_INFO_STREAM("Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
       vs.writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
       current_rotation_reference_frame = vs.readReferenceFrameRotation();
