@@ -996,7 +996,8 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
 bool ValidateQuaternion(vec4f q)
 {
     return std::isfinite(q[0]) and std::isfinite(q[1]) and std::isfinite(q[2]) and std::isfinite(q[3])
-    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3] - 1.0f) < 0.01);
+    and (std::abs(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3] - 1.0f) < 0.01)
+    and !(q[0] == 0 && q[1] == 0 && q[2] == 0 && q[3] == 0);
 }
 
 bool ValidateVector(vec3f v)
