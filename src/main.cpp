@@ -568,8 +568,10 @@ bool fill_imu_message(
       msgIMU.angular_velocity_covariance = user_data->angular_vel_covariance;
       msgIMU.linear_acceleration_covariance = user_data->linear_accel_covariance;
     }
+    return true;
   }
-  return true;
+  ROS_WARN("IMU invalid data, discarding message");
+  return false;
 }
 
 //Helper function to create magnetic field message
