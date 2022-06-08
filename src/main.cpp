@@ -93,7 +93,7 @@ struct UserData
   boost::array<double, 9ul> angular_vel_covariance = {};
   boost::array<double, 9ul> orientation_covariance = {};
   // Default rotation reference frame, to set different mounting positions
-  boost::array<double, 9ul> rotation_reference_frame = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  boost::array<double, 9ul> rotation_reference_frame = {{1, 0, 0, 0, 1, 0, 0, 0, 1}};
 
   // ROS header time stamp adjustments
   double average_time_difference{0};
