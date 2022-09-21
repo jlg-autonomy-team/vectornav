@@ -13,6 +13,9 @@ async_output_rate: 200
 # This value is used to set the serial data packet rate
 fixed_imu_rate: 800
 
+# Use sensor timestamp instead of ROS timestamp to mitigate USB communication issues
+adjust_ros_timestamp: true
+
 # Frame id where pose of imu/odom message is specified (used only for imu/odom header.frame_id)
 map_frame_id: map
 
