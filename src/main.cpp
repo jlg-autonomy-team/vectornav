@@ -66,6 +66,8 @@ bool ValidateVector(vec3f v);
 int invalid_data = 0;
 // Number of consecutive invalid data packets allowed before shutting node down.
 int max_invalid_packets = -1;
+// Save newest timestamp to avoid publishing older messages
+ros::Time newest_timestamp;
 
 // Custom user data to pass to packet callback function
 struct UserData
@@ -198,6 +200,8 @@ int main(int argc, char * argv[])
 
   // Indicates whether a rotation reference frame has been read
   bool has_rotation_reference_frame = false;
+
+  newest_timestamp = ros::Time::now();
 
   // Load all params
   pn.param<std::string>("map_frame_id", user_data.map_frame_id, "map");
@@ -934,63 +938,72 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   UserData * user_data = static_cast<UserData *>(userData);
   ros::Time time = get_time_stamp(cd, user_data, ros_time);
 
-  // IMU
-  if ((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) {
-    sensor_msgs::Imu msgIMU;
-    if (fill_imu_message(msgIMU, cd, time, user_data) == true)
-    {
-      pubIMU.publish(msgIMU);
+  // Do not publish if timestamp went back
+  if (newest_timestamp < time)
+  {
+    newest_timestamp = time;
+    // IMU
+    if ((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) {
+      sensor_msgs::Imu msgIMU;
+      if (fill_imu_message(msgIMU, cd, time, user_data) == true)
+      {
+        pubIMU.publish(msgIMU);
+      }
+    }
+
+    if ((pkg_count % user_data->output_stride) == 0) {
+      // Magnetic Field
+      if (pubMag.getNumSubscribers() > 0) {
+        sensor_msgs::MagneticField msgMag;
+        fill_mag_message(msgMag, cd, time, user_data);
+        pubMag.publish(msgMag);
+      }
+
+      // Temperature
+      if (pubTemp.getNumSubscribers() > 0) {
+        sensor_msgs::Temperature msgTemp;
+        fill_temp_message(msgTemp, cd, time, user_data);
+        pubTemp.publish(msgTemp);
+      }
+
+      // Barometer
+      if (pubPres.getNumSubscribers() > 0) {
+        sensor_msgs::FluidPressure msgPres;
+        fill_pres_message(msgPres, cd, time, user_data);
+        pubPres.publish(msgPres);
+      }
+
+      // GPS
+      if (
+        user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
+        pubGPS.getNumSubscribers() > 0) {
+        sensor_msgs::NavSatFix msgGPS;
+        fill_gps_message(msgGPS, cd, time, user_data);
+        pubGPS.publish(msgGPS);
+      }
+
+      // Odometry
+      if (
+        user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
+        pubOdom.getNumSubscribers() > 0) {
+        nav_msgs::Odometry msgOdom;
+        fill_odom_message(msgOdom, cd, time, user_data);
+        pubOdom.publish(msgOdom);
+      }
+
+      // INS
+      if (
+        user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
+        pubIns.getNumSubscribers() > 0) {
+        vectornav::Ins msgINS;
+        fill_ins_message(msgINS, cd, time, user_data);
+        pubIns.publish(msgINS);
+      }
     }
   }
-
-  if ((pkg_count % user_data->output_stride) == 0) {
-    // Magnetic Field
-    if (pubMag.getNumSubscribers() > 0) {
-      sensor_msgs::MagneticField msgMag;
-      fill_mag_message(msgMag, cd, time, user_data);
-      pubMag.publish(msgMag);
-    }
-
-    // Temperature
-    if (pubTemp.getNumSubscribers() > 0) {
-      sensor_msgs::Temperature msgTemp;
-      fill_temp_message(msgTemp, cd, time, user_data);
-      pubTemp.publish(msgTemp);
-    }
-
-    // Barometer
-    if (pubPres.getNumSubscribers() > 0) {
-      sensor_msgs::FluidPressure msgPres;
-      fill_pres_message(msgPres, cd, time, user_data);
-      pubPres.publish(msgPres);
-    }
-
-    // GPS
-    if (
-      user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-      pubGPS.getNumSubscribers() > 0) {
-      sensor_msgs::NavSatFix msgGPS;
-      fill_gps_message(msgGPS, cd, time, user_data);
-      pubGPS.publish(msgGPS);
-    }
-
-    // Odometry
-    if (
-      user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-      pubOdom.getNumSubscribers() > 0) {
-      nav_msgs::Odometry msgOdom;
-      fill_odom_message(msgOdom, cd, time, user_data);
-      pubOdom.publish(msgOdom);
-    }
-
-    // INS
-    if (
-      user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-      pubIns.getNumSubscribers() > 0) {
-      vectornav::Ins msgINS;
-      fill_ins_message(msgINS, cd, time, user_data);
-      pubIns.publish(msgINS);
-    }
+  else
+  {
+    ROS_WARN("IMU message filtered, timestamp went back in time");
   }
   pkg_count += 1;
 }
