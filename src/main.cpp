@@ -102,10 +102,19 @@ struct UserData
   ros::Time ros_start_time;
   bool adjust_ros_timestamp{false};
 
+  // sensor_time and ros_dt should always increase
+  // Store values to discard unexpected measurements
+  double newest_sensor_time{0};
+  double biggest_ros_dt{-1.0};
+  double last_sensor_time{0};
+  double maximum_imu_timestamp_difference{};
+
   // strides
   unsigned int imu_stride;
   unsigned int output_stride;
 };
+
+bool validateSensorTimestamp(const double sensor_time, UserData * user_data);
 
 // Basic loop so we can initilize our covariance parameters above
 boost::array<double, 9ul> setCov(XmlRpc::XmlRpcValue rpc)
@@ -332,6 +341,9 @@ int main(int argc, char * argv[])
   ROS_INFO("Package Receive Rate: %d Hz", package_rate);
   ROS_INFO("General Publish Rate: %d Hz", async_output_rate);
   ROS_INFO("IMU Publish Rate: %d Hz", imu_output_rate);
+
+  // Arbitrary value that indicates the maximum expected time between consecutive IMU messages
+  user_data.maximum_imu_timestamp_difference = (1 / static_cast<double>(imu_output_rate)) * 10;
 
   // Set the device info for passing to the packet callback function
   user_data.device_family = vs.determineDeviceFamily();
@@ -903,19 +915,40 @@ static ros::Time get_time_stamp(
   if (!cd.hasTimeStartup() || !user_data->adjust_ros_timestamp) {
     return (ros_time);  // don't adjust timestamp
   }
+
   const double sensor_time = cd.timeStartup() * 1e-9;  // time in seconds
+
   if (user_data->average_time_difference == 0) {       // first call
     user_data->ros_start_time = ros_time;
     user_data->average_time_difference = static_cast<double>(-sensor_time);
+    user_data->last_sensor_time = sensor_time;
   }
+
+  if (!validateSensorTimestamp(sensor_time, user_data))
+  {
+    return ros::Time(0);
+  }
+
+
   // difference between node startup and current ROS time
   const double ros_dt = (ros_time - user_data->ros_start_time).toSec();
-  // difference between elapsed ROS time and time since sensor startup
-  const double dt = ros_dt - sensor_time;
-  // compute exponential moving average
-  const double alpha = 0.001;  // average over rougly 1000 samples
-  user_data->average_time_difference =
-    user_data->average_time_difference * (1.0 - alpha) + alpha * dt;
+
+  // Do not use ros_dt to calculate average_time_difference if it is smaller than last measurement
+  if (ros_dt > user_data->biggest_ros_dt)
+  {
+    // difference between elapsed ROS time and time since sensor startup
+    const double dt = ros_dt - sensor_time;
+    // compute exponential moving average
+    const double alpha = 0.001;  // average over rougly 1000 samples
+    user_data->average_time_difference =
+      user_data->average_time_difference * (1.0 - alpha) + alpha * dt;
+    user_data->biggest_ros_dt = ros_dt;
+  }
+  else
+  {
+    ROS_WARN("WARNING: ros_dt: %f is smaller than biggest_ros_dt: %f."
+      "This ros_dt will not be used to calculate average_time_difference", ros_dt, user_data->biggest_ros_dt);
+  }
 
   // adjust sensor time by average difference to ROS time
   const ros::Time adj_time =
@@ -938,7 +971,7 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   UserData * user_data = static_cast<UserData *>(userData);
   ros::Time time = get_time_stamp(cd, user_data, ros_time);
 
-  // Do not publish if timestamp went back
+  // Only publish if timestamp did not go back in time
   if (newest_timestamp < time)
   {
     newest_timestamp = time;
@@ -1018,4 +1051,37 @@ bool ValidateQuaternion(vec4f q)
 bool ValidateVector(vec3f v)
 {
     return std::isfinite(v[0]) and std::isfinite(v[1]) and std::isfinite(v[2]);
+}
+
+bool validateSensorTimestamp(const double sensor_time, UserData * user_data)
+{
+  bool isValid = true;
+
+  // Do not calcuate timestamp if difference between current and previous timestamp is higher than expected
+  if (std::abs(sensor_time - user_data->last_sensor_time) > user_data->maximum_imu_timestamp_difference)
+  {
+    ROS_WARN("WARNING: difference between sensor_time: %f and last_sensor_time: %f is bigger than "
+      "maximum_imu_timestamp_difference: %f. Returning an invalid timestamp to reject "
+       "this measurement", sensor_time, user_data->last_sensor_time, user_data->maximum_imu_timestamp_difference);
+    isValid = false;
+  }
+
+  user_data->last_sensor_time = sensor_time;
+
+  if (isValid)
+  {
+    // Do not calcuate timestamp nor update newest_sensor_time if sensor_time is smaller than last measurement
+    if (sensor_time < user_data->newest_sensor_time)
+    {
+      ROS_WARN("WARNING: sensor_time: %f is smaller than newest_sensor_time: %f."
+        "Returning an invalid timestamp to reject this measurement", sensor_time, user_data->newest_sensor_time);
+      isValid = false;
+    }
+    else
+    {
+      user_data->newest_sensor_time = sensor_time;
+    }
+  }
+
+  return isValid;
 }
