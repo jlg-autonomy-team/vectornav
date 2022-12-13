@@ -374,6 +374,15 @@ int main(int argc, char * argv[])
   vs.writeBinaryOutput2(bor_none);
   vs.writeBinaryOutput3(bor_none);
 
+  // Write bias compensation
+//  vn::math::mat3f const gain {1., 0., 0.,
+//                              0., 1., 0.,
+//                              0., 0., 1.};
+//  vn::math::vec3f const bias {-0.14671972394, 1.78004801273, 0.022317177};
+//  vs.writeAccelerationCompensation(gain, bias, true);
+//
+//  vs.writeSettings(true);
+
   // Setting reference frame
   vn::math::mat3f current_rotation_reference_frame;
   current_rotation_reference_frame = vs.readReferenceFrameRotation();
