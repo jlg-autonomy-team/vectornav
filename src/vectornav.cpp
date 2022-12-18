@@ -177,7 +177,6 @@ bool Vectornav::set_horizontal(vectornav::SetFrameHorizontal::Request const & re
 
   ros::Duration(req.duration).sleep();
   
-  res.success = true;
   lock.lock();
     auto const end = ros::Time::now();
     take_samples_ = false;
@@ -207,9 +206,6 @@ bool Vectornav::set_horizontal(vectornav::SetFrameHorizontal::Request const & re
   vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
                               curr.b.y-static_cast<float>(bias_y), 
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
-  vn::math::vec3f const zbias {0., 0., 0.};
-  vs_.writeAccelerationCompensation(gain, bias, true);
-  vs_.writeSettings(true);
 
   res.bias_x = static_cast<double>(curr.b.x) - bias_x;
   res.bias_y = static_cast<double>(curr.b.y) - bias_y;
@@ -218,6 +214,16 @@ bool Vectornav::set_horizontal(vectornav::SetFrameHorizontal::Request const & re
   res.covariance_x = covariance_x;
   res.covariance_y = covariance_y;
   res.covariance_z = covariance_z;
+  
+  if (samples_.size() < 10) {
+    ROS_ERROR("Not enough samples taken. Aborting.");
+    res.success = false;
+    return true;
+  } else {
+    res.success = true;
+    vs_.writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
+    vs_.writeSettings(true);
+  }
 
   return true;
 }
@@ -423,11 +429,18 @@ void Vectornav::binary_async_message_received_(vn::protocol::uart::Packet & p, s
   {
     newest_timestamp_ = time;
     // IMU
-    if ((pkg_count_ % imu_stride_) == 0 && pub_imu_.getNumSubscribers() > 0) {
-      sensor_msgs::Imu imu_msg {};
-      if (fill_imu_msg(cd, imu_msg, time) == true)
-        pub_imu_.publish(imu_msg);
+    std::unique_lock<std::mutex> lock(mtx_samples_);
+    if (((pkg_count_ % imu_stride_) == 0 && pub_imu_.getNumSubscribers() > 0) || take_samples_) {
+      sensor_msgs::Imu msgIMU;
+      if (fill_imu_msg(cd, msgIMU, time) == true)
+      {
+        if ((pkg_count_ % imu_stride_) == 0)
+          pub_imu_.publish(msgIMU);
+        if (take_samples_)
+          samples_.push_back({msgIMU.linear_acceleration.x, msgIMU.linear_acceleration.y, msgIMU.linear_acceleration.z});
+      }
     }
+    lock.unlock();
 
     if ((pkg_count_ % output_stride_) == 0) {
       // Magnetic Field
@@ -724,11 +737,6 @@ bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu &
       std::copy(params_.linear_accel_covariance.begin(), params_.linear_accel_covariance.end(),
                 imu_msg.linear_acceleration_covariance.begin());
     }
-
-    // Take sample
-    std::unique_lock<std::mutex> lock(mtx_samples_);
-    if (take_samples_)
-      samples_.push_back({imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z});
     return true;
   }
   ROS_WARN("IMU invalid data, discarding message");
