@@ -42,11 +42,18 @@
 #include "sensor_msgs/NavSatFix.h"
 #include "sensor_msgs/Temperature.h"
 #include "std_srvs/Empty.h"
+#include "vectornav/SetFrameHorizontal.h"
+#include <mutex>
 
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
-ros::ServiceServer resetOdomSrv;
+ros::ServiceServer resetOdomSrv, setHorizontalSrv;
 
 XmlRpc::XmlRpcValue rpc_temp;
+
+std::mutex mtx_samples;
+struct sample_t{double x, y, z;};
+bool take_samples{false};
+std::vector<sample_t> samples{};
 
 // Include this header file to get access to VectorNav sensors.
 #include "vn/compositedata.h"
@@ -145,6 +152,83 @@ bool resetOdom(
 {
   ROS_INFO("Reset Odometry");
   user_data->initial_position_set = false;
+  return true;
+}
+
+// Calibrate bias of accelerometer.
+bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectornav::SetFrameHorizontal::Response & res, VnSensor* vs_ptr, int *SensorImuRate)
+{
+  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
+  ROS_INFO("Set horizontal callback received. Setting horizontal frame.");
+  vn::math::mat3f const gain {1., 0., 0.,
+                              0., 1., 0.,
+                              0., 0., 1.};
+  
+  if (req.reset) {
+    vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
+    vs_ptr->writeSettings(true);
+
+    res.success = true;
+    return true;
+  }
+
+  sample_lock.lock();
+    samples.clear();
+    samples.reserve(static_cast<size_t>(req.duration * (*SensorImuRate) * 1.5));
+    take_samples = true;
+    auto const start = ros::Time::now();
+  sample_lock.unlock();
+
+  ros::Duration(req.duration).sleep();
+
+  sample_lock.lock();
+    auto const end = ros::Time::now();
+    take_samples = false;
+    
+    res.samples_taken = samples.size();
+    res.elapsed_time = (end - start).toSec();
+
+    // Calculate mean of samples
+    double bias_x{0.}, bias_y{0.}, bias_z{0.};
+    for (auto const & sample : samples) {
+      bias_x += sample.x; bias_y += sample.y; bias_z += sample.z;
+    }
+    bias_x /= samples.size(); bias_y /= samples.size(); bias_z /= samples.size();
+
+    // Calculate covariance of samples
+    double covariance_x{0.}, covariance_y{0.}, covariance_z{0.};
+    for (auto const & sample : samples) {
+      covariance_x += (sample.x - bias_x) * (sample.x - bias_x);
+      covariance_y += (sample.y - bias_y) * (sample.y - bias_y);
+      covariance_z += (sample.z - bias_z) * (sample.z - bias_z);
+    }
+    covariance_x /= samples.size(); covariance_y /= samples.size(); covariance_z /= samples.size();
+  sample_lock.unlock();
+
+  auto const curr { vs_ptr->readAccelerationCompensation() };
+
+  vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
+                              curr.b.y-static_cast<float>(bias_y), 
+                              curr.b.z-static_cast<float>(bias_z-9.80665)};
+
+  res.bias_x = static_cast<double>(curr.b.x) - bias_x;
+  res.bias_y = static_cast<double>(curr.b.y) - bias_y;
+  res.bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
+
+  res.covariance_x = covariance_x;
+  res.covariance_y = covariance_y;
+  res.covariance_z = covariance_z;
+  
+  if (samples.size() < 10) {
+    ROS_ERROR("Not enough samples taken. Aborting.");
+    res.success = false;
+    return true;
+  } else {
+    res.success = true;
+    vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
+    vs_ptr->writeSettings(true);
+  }
+
   return true;
 }
 
@@ -374,15 +458,6 @@ int main(int argc, char * argv[])
   vs.writeBinaryOutput2(bor_none);
   vs.writeBinaryOutput3(bor_none);
 
-  // Write bias compensation
-//  vn::math::mat3f const gain {1., 0., 0.,
-//                              0., 1., 0.,
-//                              0., 0., 1.};
-//  vn::math::vec3f const bias {-0.14671972394, 1.78004801273, 0.022317177};
-//  vs.writeAccelerationCompensation(gain, bias, true);
-//
-//  vs.writeSettings(true);
-
   // Setting reference frame
   vn::math::mat3f current_rotation_reference_frame;
   current_rotation_reference_frame = vs.readReferenceFrameRotation();
@@ -419,6 +494,11 @@ int main(int argc, char * argv[])
 
   // Register async callback function
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
+  
+  // Write bias compensation
+  setHorizontalSrv = pn.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
+    "set_horizontal", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
+
 
   // You spin me right round, baby
   // Right round like a record, baby
@@ -985,14 +1065,19 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   {
     newest_timestamp = time;
     // IMU
-    if ((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) {
+    std::unique_lock<std::mutex> lock(mtx_samples);
+    if (((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) || take_samples) {
       sensor_msgs::Imu msgIMU;
       if (fill_imu_message(msgIMU, cd, time, user_data) == true)
       {
-        pubIMU.publish(msgIMU);
+        if ((pkg_count % user_data->imu_stride) == 0)
+          pubIMU.publish(msgIMU);
+        if (take_samples)
+          samples.push_back({msgIMU.linear_acceleration.x, msgIMU.linear_acceleration.y, msgIMU.linear_acceleration.z});
       }
     }
-
+    lock.unlock();
+    
     if ((pkg_count % user_data->output_stride) == 0) {
       // Magnetic Field
       if (pubMag.getNumSubscribers() > 0) {
