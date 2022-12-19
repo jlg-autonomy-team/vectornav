@@ -255,18 +255,18 @@ int main(int argc, char * argv[])
 
   // ROS node init
   rclcpp::init(argc, argv);
-  node = rclcpp::Node::make_shared("vectornav");
+  node = rclcpp::Node::make_shared("imu");
 
-  pubIMU = node->create_publisher<sensor_msgs::msg::Imu>("imu/data", 1000);
-  pubMag = node->create_publisher<sensor_msgs::msg::MagneticField>("imu/mag", 1000);
-  pubGPS = node->create_publisher<sensor_msgs::msg::NavSatFix>("imu/global_position/raw/fix", 1000);
-  pubOdom = node->create_publisher<nav_msgs::msg::Odometry>("imu/odom", 1000);
-  pubTemp = node->create_publisher<sensor_msgs::msg::Temperature>("imu/temperature", 1000);
-  pubPres = node->create_publisher<sensor_msgs::msg::FluidPressure>("imu/atm_pressure", 1000);
-  pubIns = node->create_publisher<vectornav::msg::Ins>("imu/INS", 1000);
+  pubIMU = node->create_publisher<sensor_msgs::msg::Imu>("~/data", 1000);
+  pubMag = node->create_publisher<sensor_msgs::msg::MagneticField>("~/mag", 1000);
+  pubGPS = node->create_publisher<sensor_msgs::msg::NavSatFix>("~/global_position/raw/fix", 1000);
+  pubOdom = node->create_publisher<nav_msgs::msg::Odometry>("~/odom", 1000);
+  pubTemp = node->create_publisher<sensor_msgs::msg::Temperature>("~/temperature", 1000);
+  pubPres = node->create_publisher<sensor_msgs::msg::FluidPressure>("~/atm_pressure", 1000);
+  pubIns = node->create_publisher<vectornav::msg::Ins>("~/INS", 1000);
 
   resetOdomSrv = node->create_service<std_srvs::srv::Empty>(
-    "reset_odom", std::bind(&resetOdom, std::placeholders::_1, std::placeholders::_2, &user_data));
+    "~/reset_odom", std::bind(&resetOdom, std::placeholders::_1, std::placeholders::_2, &user_data));
 
   // Serial Port Settings
   string SensorPort;
@@ -492,8 +492,7 @@ int main(int argc, char * argv[])
   
   // Write bias compensation
   setHorizontalSrv = node->create_service<vectornav::srv::SetFrameHorizontal>(
-    "set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate));
-
+    "~/set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate));
 
   // You spin me right round, baby
   // Right round like a record, baby

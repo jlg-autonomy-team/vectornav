@@ -135,7 +135,7 @@ def generate_launch_description():
     ld.add_action(launch_ros.actions.Node(
         package='vectornav',
         executable='vnpub',
-        name='vectornav',
+        name='imu',
         namespace=params['namespace'],
         parameters=[{
             'serial_port': params['port'],
