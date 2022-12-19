@@ -1,8 +1,8 @@
-Header header
+std_msgs/Header header
 
 float64 time	# GPS time of week in seconds
 uint16 week		# GPS week (week)
-uint64 utcTime	# The current UTC time. The year is given as a signed byte year offset from the year 2000. E.g. 2013 as 13.
+uint64 utc_time	# The current UTC time. The year is given as a signed byte year offset from the year 2000. E.g. 2013 as 13.
                 # Fields:       year    month    day    hour    min    sec    ms
                 # Byte offset:  0       1        2      3       4      5      6|7
 
@@ -21,7 +21,7 @@ uint64 utcTime	# The current UTC time. The year is given as a signed byte year o
 #								Mag/Pres Error	2			1 bit	High if Magnetometer or Pressure sensor error is detected.
 #								GPS Error		3			1 bit	High if GPS communication error is detected.
 #Reserved	7			9 bits	Reserved for future use.
-uint16 insStatus
+uint16 ins_status
 
 float32 yaw		# Yaw angle relative to true north. (degree)
 float32 pitch	# Yaw angle relative to true north (degree)
@@ -31,10 +31,10 @@ float64 latitude	# INS solution position in geodetic latitude (degree)
 float64 longitude	# INS solution position in geodetic longitude (degree)
 float64 altitude	# Height above ellipsoid. (WGS84) (meter)
 
-float32 nedVelX		# INS solution velocity in NED frame. (North) (m/s)
-float32 nedVelY		# INS solution velocity in NED frame. (East) (m/s)
-float32 nedVelZ		# INS solution velocity in NED frame. (Down) (m/s)
+float32 ned_vel_x		# INS solution velocity in NED frame. (North) (m/s)
+float32 ned_vel_y		# INS solution velocity in NED frame. (East) (m/s)
+float32 ned_vel_z		# INS solution velocity in NED frame. (Down) (m/s)
 
-float32[3] attUncertainty	# Uncertainty in attitude estimate (yaw, pitch and roll in degrees)
-float32 posUncertainty	# Uncertainty in position estimate (m)
-float32 velUncertainty	# Uncertainty in velocity estimate (m/s)
+float32[3] att_uncertainty	# Uncertainty in attitude estimate (yaw, pitch and roll in degrees)
+float32 pos_uncertainty	# Uncertainty in position estimate (m)
+float32 vel_uncertainty	# Uncertainty in velocity estimate (m/s)
