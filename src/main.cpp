@@ -497,7 +497,7 @@ int main(int argc, char * argv[])
   
   // Write bias compensation
   setHorizontalSrv = pn.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
-    "set_horizontal", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
+    "set_acc_bias", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
 
 
   // You spin me right round, baby
