@@ -159,6 +159,7 @@ void set_horizontal(
     vs_ptr->writeSettings(true);
 
     resp->success = true;
+    return;
   }
 
   sample_lock.lock();
@@ -286,7 +287,7 @@ int main(int argc, char * argv[])
   node->declare_parameter<std::string>("frame_id", "vectornav");
   node->declare_parameter<bool>("tf_ned_to_enu", false);
   node->declare_parameter<bool>("frame_based_enu", false);
-  node->declare_parameter<bool>("tf_ned_to_nwu", false);
+  node->declare_parameter<bool>("tf_ned_to_nwu", true);
   node->declare_parameter<bool>("frame_based_nwu", false);
   node->declare_parameter<bool>("adjust_ros_timestamp", false);
   node->declare_parameter<int>("async_output_rate", 40);
