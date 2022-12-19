@@ -31,24 +31,35 @@
 
 // ROS Libraries
 #include <tf2/LinearMath/Transform.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <vectornav/Ins.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <vectornav/msg/ins.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/fluid_pressure.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/magnetic_field.hpp>
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <sensor_msgs/msg/temperature.hpp>
+#include <std_srvs/srv/empty.hpp>
+#include <vectornav/srv/set_frame_horizontal.hpp>
 
-#include "nav_msgs/Odometry.h"
-#include "ros/ros.h"
-#include "sensor_msgs/FluidPressure.h"
-#include "sensor_msgs/Imu.h"
-#include "sensor_msgs/MagneticField.h"
-#include "sensor_msgs/NavSatFix.h"
-#include "sensor_msgs/Temperature.h"
-#include "std_srvs/Empty.h"
-#include "vectornav/SetFrameHorizontal.h"
+#include <rclcpp/rclcpp.hpp>
+
 #include <mutex>
 
-ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
-ros::ServiceServer resetOdomSrv, setHorizontalSrv;
+rclcpp::Node::SharedPtr node = nullptr;
 
-XmlRpc::XmlRpcValue rpc_temp;
+rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pubIMU;
+rclcpp::Publisher<sensor_msgs::msg::MagneticField>::SharedPtr pubMag;
+rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pubGPS;
+rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdom;
+rclcpp::Publisher<sensor_msgs::msg::Temperature>::SharedPtr pubTemp;
+rclcpp::Publisher<sensor_msgs::msg::FluidPressure>::SharedPtr pubPres;
+rclcpp::Publisher<vectornav::msg::Ins>::SharedPtr pubIns;
+
+rclcpp::Service<std_srvs::srv::Empty>::SharedPtr resetOdomSrv;
+rclcpp::Service<vectornav::srv::SetFrameHorizontal>::SharedPtr setHorizontalSrv;
+
+//XmlRpc::XmlRpcValue rpc_temp;
 
 std::mutex mtx_samples;
 struct sample_t{double x, y, z;};
@@ -74,7 +85,7 @@ int invalid_data = 0;
 // Number of consecutive invalid data packets allowed before shutting node down.
 int max_invalid_packets = -1;
 // Save newest timestamp to avoid publishing older messages
-ros::Time newest_timestamp;
+rclcpp::Time newest_timestamp;
 
 // Custom user data to pass to packet callback function
 struct UserData
@@ -98,15 +109,15 @@ struct UserData
   bool initial_position_set = false;
 
   //Unused covariances initialized to zero's
-  boost::array<double, 9ul> linear_accel_covariance = {};
-  boost::array<double, 9ul> angular_vel_covariance = {};
-  boost::array<double, 9ul> orientation_covariance = {};
+  std::vector<double> linear_accel_covariance = {};
+  std::vector<double> angular_vel_covariance = {};
+  std::vector<double> orientation_covariance = {};
   // Default rotation reference frame, to set different mounting positions
-  boost::array<double, 9ul> rotation_reference_frame = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  std::vector<double> rotation_reference_frame = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
   // ROS header time stamp adjustments
   double average_time_difference{0};
-  ros::Time ros_start_time;
+  rclcpp::Time ros_start_time;
   bool adjust_ros_timestamp{false};
 
   // sensor_time and ros_dt should always increase
@@ -123,70 +134,48 @@ struct UserData
 
 bool validateSensorTimestamp(const double sensor_time, UserData * user_data);
 
-// Basic loop so we can initilize our covariance parameters above
-boost::array<double, 9ul> setCov(XmlRpc::XmlRpcValue rpc)
-{
-  // Output covariance vector
-  boost::array<double, 9ul> output = {0.0};
-
-  // Convert the RPC message to array
-  ROS_ASSERT(rpc.getType() == XmlRpc::XmlRpcValue::TypeArray);
-
-  for (int i = 0; i < 9; i++) {
-    ROS_ASSERT(rpc[i].getType() == XmlRpc::XmlRpcValue::TypeDouble);
-    output[i] = (double)rpc[i];
-  }
-  return output;
-}
-
-// Basic loop so we can initialize our rotation reference frame
-boost::array<double, 9ul> setRotationFrame(XmlRpc::XmlRpcValue rpc){
-  // as we are using now a 3x3 matrix, as in the covariance reading,
-  // and that method was inherited, reuse it
-  return setCov(rpc);
-}
-
 // Reset initial position to current position
-bool resetOdom(
-  std_srvs::Empty::Request & req, std_srvs::Empty::Response & resp, UserData * user_data)
+void resetOdom(
+  const std::shared_ptr<std_srvs::srv::Empty::Request> req,
+  std::shared_ptr<std_srvs::srv::Empty::Response> resp, UserData * user_data)
 {
-  ROS_INFO("Reset Odometry");
+  RCLCPP_INFO(node->get_logger(), "Reset Odometry");
   user_data->initial_position_set = false;
-  return true;
 }
 
 // Calibrate bias of accelerometer.
-bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectornav::SetFrameHorizontal::Response & res, VnSensor* vs_ptr, int *SensorImuRate)
+void set_horizontal(
+  const std::shared_ptr<vectornav::srv::SetFrameHorizontal::Request> req,
+  std::shared_ptr<vectornav::srv::SetFrameHorizontal::Response> resp, VnSensor* vs_ptr, int *SensorImuRate)
 {
   std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
-  ROS_INFO("Set horizontal callback received. Setting horizontal frame.");
+  RCLCPP_INFO(node->get_logger(),  "Set horizontal callback received. Setting horizontal frame.");
   vn::math::mat3f const gain {1., 0., 0.,
                               0., 1., 0.,
                               0., 0., 1.};
   
-  if (req.reset) {
+  if (req->reset) {
     vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
     vs_ptr->writeSettings(true);
 
-    res.success = true;
-    return true;
+    resp->success = true;
   }
 
   sample_lock.lock();
     samples.clear();
-    samples.reserve(static_cast<size_t>(req.duration * (*SensorImuRate) * 1.5));
+    samples.reserve(static_cast<size_t>(req->duration * (*SensorImuRate) * 1.5));
     take_samples = true;
-    auto const start = ros::Time::now();
+    auto const start = node->get_clock()->now();
   sample_lock.unlock();
 
-  ros::Duration(req.duration).sleep();
+  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*req->duration)}});
 
   sample_lock.lock();
-    auto const end = ros::Time::now();
+    auto const end = node->get_clock()->now();
     take_samples = false;
     
-    res.samples_taken = samples.size();
-    res.elapsed_time = (end - start).toSec();
+    resp->samples_taken = samples.size();
+    resp->elapsed_time = (end - start).seconds();
 
     // Calculate mean of samples
     double bias_x{0.}, bias_y{0.}, bias_z{0.};
@@ -211,25 +200,22 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
                               curr.b.y-static_cast<float>(bias_y), 
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
 
-  res.bias_x = static_cast<double>(curr.b.x) - bias_x;
-  res.bias_y = static_cast<double>(curr.b.y) - bias_y;
-  res.bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
+  resp->bias_x = static_cast<double>(curr.b.x) - bias_x;
+  resp->bias_y = static_cast<double>(curr.b.y) - bias_y;
+  resp->bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
 
-  res.covariance_x = covariance_x;
-  res.covariance_y = covariance_y;
-  res.covariance_z = covariance_z;
+  resp->covariance_x = covariance_x;
+  resp->covariance_y = covariance_y;
+  resp->covariance_z = covariance_z;
   
   if (samples.size() < 10) {
-    ROS_ERROR("Not enough samples taken. Aborting.");
-    res.success = false;
-    return true;
+    RCLCPP_ERROR(node->get_logger(),  "Not enough samples taken. Aborting.");
+    resp->success = false;
   } else {
-    res.success = true;
+    resp->success = true;
     vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
     vs_ptr->writeSettings(true);
   }
-
-  return true;
 }
 
 // Assure that the serial port is set to async low latency in order to reduce delays and package pilup.
@@ -245,11 +231,11 @@ bool optimize_serial_communication(std::string portName)
   portFd = ::open(portName.c_str(), O_RDWR | O_NOCTTY);
 
   if (portFd == -1) {
-    ROS_WARN("Can't open port for optimization");
+    RCLCPP_WARN(node->get_logger(),  "Can't open port for optimization");
     return false;
   }
 
-  ROS_INFO("Set port to ASYNCY_LOW_LATENCY");
+  RCLCPP_INFO(node->get_logger(),  "Set port to ASYNCY_LOW_LATENCY");
   struct serial_struct serial;
   ioctl(portFd, TIOCGSERIAL, &serial);
   serial.flags |= ASYNC_LOW_LATENCY;
@@ -267,20 +253,19 @@ int main(int argc, char * argv[])
   UserData user_data;
 
   // ROS node init
-  ros::init(argc, argv, "vectornav");
-  ros::NodeHandle n;
-  ros::NodeHandle pn("~");
+  rclcpp::init(argc, argv);
+  node = rclcpp::Node::make_shared("vectornav");
 
-  pubIMU = n.advertise<sensor_msgs::Imu>("imu/data", 1000);
-  pubMag = n.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
-  pubGPS = n.advertise<sensor_msgs::NavSatFix>("imu/global_position/raw/fix", 1000);
-  pubOdom = n.advertise<nav_msgs::Odometry>("imu/odom", 1000);
-  pubTemp = n.advertise<sensor_msgs::Temperature>("imu/temperature", 1000);
-  pubPres = n.advertise<sensor_msgs::FluidPressure>("imu/atm_pressure", 1000);
-  pubIns = n.advertise<vectornav::Ins>("imu/INS", 1000);
+  pubIMU = node->create_publisher<sensor_msgs::msg::Imu>("imu/data", 1000);
+  pubMag = node->create_publisher<sensor_msgs::msg::MagneticField>("imu/mag", 1000);
+  pubGPS = node->create_publisher<sensor_msgs::msg::NavSatFix>("imu/global_position/raw/fix", 1000);
+  pubOdom = node->create_publisher<nav_msgs::msg::Odometry>("imu/odom", 1000);
+  pubTemp = node->create_publisher<sensor_msgs::msg::Temperature>("imu/temperature", 1000);
+  pubPres = node->create_publisher<sensor_msgs::msg::FluidPressure>("imu/atm_pressure", 1000);
+  pubIns = node->create_publisher<vectornav::msg::Ins>("imu/INS", 1000);
 
-  resetOdomSrv = n.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
-    "reset_odom", boost::bind(&resetOdom, _1, _2, &user_data));
+  resetOdomSrv = node->create_service<std_srvs::srv::Empty>(
+    "reset_odom", std::bind(&resetOdom, std::placeholders::_1, std::placeholders::_2, &user_data));
 
   // Serial Port Settings
   string SensorPort;
@@ -294,47 +279,56 @@ int main(int argc, char * argv[])
   // Indicates whether a rotation reference frame has been read
   bool has_rotation_reference_frame = false;
 
-  newest_timestamp = ros::Time::now();
+  newest_timestamp = node->get_clock()->now();
 
   // Load all params
-  pn.param<std::string>("map_frame_id", user_data.map_frame_id, "map");
-  pn.param<std::string>("frame_id", user_data.frame_id, "vectornav");
-  pn.param<bool>("tf_ned_to_enu", user_data.tf_ned_to_enu, false);
-  pn.param<bool>("frame_based_enu", user_data.frame_based_enu, false);
-  pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, false);
-  pn.param<bool>("frame_based_nwu", user_data.frame_based_nwu, false);
-  pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
-  pn.param<int>("async_output_rate", async_output_rate, 40);
-  pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
-  pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
-  pn.param<int>("serial_baud", SensorBaudrate, 115200);
-  pn.param<int>("fixed_imu_rate", SensorImuRate, 800);
-  pn.param<int>("max_invalid_packets", max_invalid_packets, 500);
+  node->declare_parameter<std::string>("map_frame_id", "map");
+  node->declare_parameter<std::string>("frame_id", "vectornav");
+  node->declare_parameter<bool>("tf_ned_to_enu", false);
+  node->declare_parameter<bool>("frame_based_enu", false);
+  node->declare_parameter<bool>("tf_ned_to_nwu", false);
+  node->declare_parameter<bool>("frame_based_nwu", false);
+  node->declare_parameter<bool>("adjust_ros_timestamp", false);
+  node->declare_parameter<int>("async_output_rate", 40);
+  node->declare_parameter<int>("imu_output_rate", 40);
+  node->declare_parameter<std::string>("serial_port", "/dev/ttyUSB1");
+  node->declare_parameter<int>("serial_baud", 921600);
+  node->declare_parameter<int>("fixed_imu_rate", 800);
+  node->declare_parameter<int>("max_invalid_packets", 500);
 
-  //Call to set covariances
-  if (pn.getParam("linear_accel_covariance", rpc_temp)) {
-    user_data.linear_accel_covariance = setCov(rpc_temp);
-  }
-  if (pn.getParam("angular_vel_covariance", rpc_temp)) {
-    user_data.angular_vel_covariance = setCov(rpc_temp);
-  }
-  if (pn.getParam("orientation_covariance", rpc_temp)) {
-    user_data.orientation_covariance = setCov(rpc_temp);
-  }
-  if (pn.getParam("rotation_reference_frame", rpc_temp)) {
-     user_data.rotation_reference_frame = setRotationFrame(rpc_temp);
-     has_rotation_reference_frame = true;
-  }
+  node->declare_parameter<std::vector<double>>("linear_accel_covariance", {0.0003, 0, 0, 0, 0.0003, 0, 0, 0, 0.0003});
+  node->declare_parameter<std::vector<double>>("angular_vel_covariance", {0.02, 0, 0, 0, 0.02, 0, 0, 0, 0.02});
+  node->declare_parameter<std::vector<double>>("orientation_covariance", {0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01});
+  node->declare_parameter<std::vector<double>>("rotation_reference_frame", {1., 0, 0, 0, 1., 0, 0, 0, 1.});
+
+  node->get_parameter<std::string>("map_frame_id", user_data.map_frame_id);
+  node->get_parameter<std::string>("frame_id", user_data.frame_id);
+  node->get_parameter<bool>("tf_ned_to_enu", user_data.tf_ned_to_enu);
+  node->get_parameter<bool>("frame_based_enu", user_data.frame_based_enu);
+  node->get_parameter<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu);
+  node->get_parameter<bool>("frame_based_nwu", user_data.frame_based_nwu);
+  node->get_parameter<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp);
+  node->get_parameter<int>("async_output_rate", async_output_rate);
+  node->get_parameter<int>("imu_output_rate", imu_output_rate);
+  node->get_parameter<std::string>("serial_port", SensorPort);
+  node->get_parameter<int>("serial_baud", SensorBaudrate);
+  node->get_parameter<int>("fixed_imu_rate", SensorImuRate);
+  node->get_parameter<int>("max_invalid_packets", max_invalid_packets);
+
+  node->get_parameter("linear_accel_covariance", user_data.linear_accel_covariance);
+  node->get_parameter("angular_vel_covariance", user_data.angular_vel_covariance);
+  node->get_parameter("orientation_covariance", user_data.orientation_covariance);
+  node->get_parameter("rotation_reference_frame", user_data.rotation_reference_frame);
 
   if (user_data.tf_ned_to_enu && user_data.tf_ned_to_nwu)
   {
-    ROS_ERROR("Unable to set both tf_ned_to_enu and tf_ned_to_nwu to true simultaneously. "
+    RCLCPP_ERROR(node->get_logger(),  "Unable to set both tf_ned_to_enu and tf_ned_to_nwu to true simultaneously. "
     "Please use just one of them to get data in the ENO or NWU frame, or set both "
     "to false to get data in the NED frame");
-    ros::shutdown();
+    rclcpp::shutdown();
   }
 
-  ROS_INFO("Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
+  RCLCPP_INFO(node->get_logger(),  "Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
 
   // try to optimize the serial port
   optimize_serial_communication(SensorPort);
@@ -355,7 +349,7 @@ int main(int argc, char * argv[])
     // Make this variable only accessible in the while loop
     static int i = 0;
     defaultBaudrate = supportedBaudrates[i];
-    ROS_INFO("Connecting with default at %d", defaultBaudrate);
+    RCLCPP_INFO(node->get_logger(),  "Connecting with default at %d", defaultBaudrate);
     // Default response was too low and retransmit time was too long by default.
     // They would cause errors
     vs.setResponseTimeoutMs(1000);  // Wait for up to 1000 ms for response
@@ -372,7 +366,7 @@ int main(int argc, char * argv[])
         // reconnects the attached serial port at the new baudrate.
         vs.changeBaudRate(SensorBaudrate);
         // Only makes it here once we have the default correct
-        ROS_INFO("Connected baud rate is %d", vs.baudrate());
+        RCLCPP_INFO(node->get_logger(),  "Connected baud rate is %d", vs.baudrate());
         baudSet = true;
       }
     }
@@ -380,7 +374,7 @@ int main(int argc, char * argv[])
     catch (...) {
       // Disconnect if we had the wrong default and we were connected
       vs.disconnect();
-      ros::Duration(0.2).sleep();
+      node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*0.2)}});
     }
     // Increment the default iterator
     i++;
@@ -393,20 +387,20 @@ int main(int argc, char * argv[])
 
   // Now we verify connection (Should be good if we made it this far)
   if (vs.verifySensorConnectivity()) {
-    ROS_INFO("Device connection established");
+    RCLCPP_INFO(node->get_logger(),  "Device connection established");
   } else {
-    ROS_ERROR("No device communication");
-    ROS_WARN("Please input a valid baud rate. Valid are:");
-    ROS_WARN("9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
-    ROS_WARN("With the test IMU 128000 did not work, all others worked fine.");
+    RCLCPP_ERROR(node->get_logger(),  "No device communication");
+    RCLCPP_WARN(node->get_logger(),  "Please input a valid baud rate. Valid are:");
+    RCLCPP_WARN(node->get_logger(),  "9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
+    RCLCPP_WARN(node->get_logger(),  "With the test IMU 128000 did not work, all others worked fine.");
   }
   // Query the sensor's model number.
   string mn = vs.readModelNumber();
   string fv = vs.readFirmwareVersion();
   uint32_t hv = vs.readHardwareRevision();
   uint32_t sn = vs.readSerialNumber();
-  ROS_INFO("Model Number: %s, Firmware Version: %s", mn.c_str(), fv.c_str());
-  ROS_INFO("Hardware Revision : %d, Serial Number : %d", hv, sn);
+  RCLCPP_INFO(node->get_logger(),  "Model Number: %s, Firmware Version: %s", mn.c_str(), fv.c_str());
+  RCLCPP_INFO(node->get_logger(),  "Hardware Revision : %d, Serial Number : %d", hv, sn);
 
   // calculate the least common multiple of the two rate and assure it is a
   // valid package rate, also calculate the imu and output strides
@@ -415,16 +409,16 @@ int main(int argc, char * argv[])
     package_rate = allowed_rate;
     if ((package_rate % async_output_rate) == 0 && (package_rate % imu_output_rate) == 0) break;
   }
-  ROS_ASSERT_MSG(
-    package_rate,
-    "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
+  if (package_rate == 0) {
+    RCLCPP_ERROR(node->get_logger(),  "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
     "200 Hz",
     imu_output_rate, async_output_rate);
+  }
   user_data.imu_stride = package_rate / imu_output_rate;
   user_data.output_stride = package_rate / async_output_rate;
-  ROS_INFO("Package Receive Rate: %d Hz", package_rate);
-  ROS_INFO("General Publish Rate: %d Hz", async_output_rate);
-  ROS_INFO("IMU Publish Rate: %d Hz", imu_output_rate);
+  RCLCPP_INFO(node->get_logger(),  "Package Receive Rate: %d Hz", package_rate);
+  RCLCPP_INFO(node->get_logger(),  "General Publish Rate: %d Hz", async_output_rate);
+  RCLCPP_INFO(node->get_logger(),  "IMU Publish Rate: %d Hz", imu_output_rate);
 
   // Arbitrary value that indicates the maximum expected time between consecutive IMU messages
   user_data.maximum_imu_timestamp_difference = (1 / static_cast<double>(imu_output_rate)) * 10;
@@ -461,7 +455,7 @@ int main(int argc, char * argv[])
   // Setting reference frame
   vn::math::mat3f current_rotation_reference_frame;
   current_rotation_reference_frame = vs.readReferenceFrameRotation();
-  ROS_INFO_STREAM("Current rotation reference frame: " << current_rotation_reference_frame);
+  RCLCPP_INFO_STREAM(node->get_logger(), "Current rotation reference frame: " << current_rotation_reference_frame);
 
   if (has_rotation_reference_frame == true) {
     vn::math::mat3f matrix_rotation_reference_frame;
@@ -481,11 +475,11 @@ int main(int argc, char * argv[])
       || current_rotation_reference_frame.e11 != matrix_rotation_reference_frame.e11
       || current_rotation_reference_frame.e22 != matrix_rotation_reference_frame.e22)
     {
-      ROS_INFO_STREAM("Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
+      RCLCPP_INFO_STREAM(node->get_logger(), "Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
       vs.writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
       current_rotation_reference_frame = vs.readReferenceFrameRotation();
-      ROS_INFO_STREAM("New rotation reference frame: " << current_rotation_reference_frame);
-      ROS_INFO_STREAM("Restarting device to save new reference frame");
+      RCLCPP_INFO_STREAM(node->get_logger(), "New rotation reference frame: " << current_rotation_reference_frame);
+      RCLCPP_INFO_STREAM(node->get_logger(), "Restarting device to save new reference frame");
       vs.writeSettings(true);
       vs.reset();
     }
@@ -496,30 +490,28 @@ int main(int argc, char * argv[])
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
   
   // Write bias compensation
-  setHorizontalSrv = pn.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
-    "set_acc_bias", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
+  setHorizontalSrv = node->create_service<vectornav::srv::SetFrameHorizontal>(
+    "set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate));
 
 
   // You spin me right round, baby
   // Right round like a record, baby
   // Right round round round
-  while (ros::ok()) {
-    ros::spin();  // Need to make sure we disconnect properly. Check if all ok.
-  }
+  rclcpp::spin(node);
 
   // Node has been terminated
   vs.unregisterAsyncPacketReceivedHandler();
-  ros::Duration(0.5).sleep();
-  ROS_INFO("Unregisted the Packet Received Handler");
+  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*0.5)}});
+  RCLCPP_INFO(node->get_logger(),  "Unregisted the Packet Received Handler");
   vs.disconnect();
-  ros::Duration(0.5).sleep();
-  ROS_INFO("%s is disconnected successfully", mn.c_str());
+  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*0.5)}});
+  RCLCPP_INFO(node->get_logger(),  "%s is disconnected successfully", mn.c_str());
   return 0;
 }
 
 //Helper function to create IMU message
 bool fill_imu_message(
-  sensor_msgs::Imu & msgIMU, vn::sensors::CompositeData & cd, ros::Time & time,
+  sensor_msgs::msg::Imu & msgIMU, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgIMU.header.stamp = time;
@@ -543,14 +535,14 @@ bool fill_imu_message(
     if (not ValidateQuaternion(q) or not ValidateVector(ar) or not ValidateVector(al))
     {
         invalid_data++;
-        ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
+        RCLCPP_WARN_THROTTLE(node->get_logger(), *node->get_clock(), 1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
                     invalid_data, q[0], q[1], q[2], q[3],
                     ar[0], ar[1], ar[2], al[0], al[1], al[2]);
 
         // Shutdown node if more than max_invalid_packets are received consecutively
         if ((max_invalid_packets != -1) && (invalid_data >= max_invalid_packets))
         {
-          ros::shutdown();
+          rclcpp::shutdown();
         }
 
         return false;
@@ -562,7 +554,7 @@ bool fill_imu_message(
       if (user_data->tf_ned_to_enu) {
         // If we want the orientation to be based on the reference label on the imu
         tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
-        geometry_msgs::Quaternion quat_msg;
+        geometry_msgs::msg::Quaternion quat_msg;
 
         if (user_data->frame_based_enu) {
           // Create a rotation from NED -> ENU
@@ -611,7 +603,7 @@ bool fill_imu_message(
       }
       else if (user_data->tf_ned_to_nwu) {
         tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
-        geometry_msgs::Quaternion quat_msg;
+        geometry_msgs::msg::Quaternion quat_msg;
 
         if (user_data->frame_based_nwu) {
           // Create a rotation from NED -> NWU
@@ -670,18 +662,22 @@ bool fill_imu_message(
         msgIMU.linear_acceleration.z = al[2];
       }
       // Covariances pulled from parameters
-      msgIMU.angular_velocity_covariance = user_data->angular_vel_covariance;
-      msgIMU.linear_acceleration_covariance = user_data->linear_accel_covariance;
+      std::copy(user_data->orientation_covariance.begin(),
+        user_data->orientation_covariance.end(),
+        msgIMU.orientation_covariance.begin());
+      std::copy(user_data->angular_vel_covariance.begin(),
+        user_data->angular_vel_covariance.end(),
+        msgIMU.angular_velocity_covariance.begin());
     }
     return true;
   }
-  ROS_WARN("IMU invalid data, discarding message");
+  RCLCPP_WARN(node->get_logger(),  "IMU invalid data, discarding message");
   return false;
 }
 
 //Helper function to create magnetic field message
 void fill_mag_message(
-  sensor_msgs::MagneticField & msgMag, vn::sensors::CompositeData & cd, ros::Time & time,
+  sensor_msgs::msg::MagneticField & msgMag, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgMag.header.stamp = time;
@@ -698,7 +694,7 @@ void fill_mag_message(
 
 //Helper function to create gps message
 void fill_gps_message(
-  sensor_msgs::NavSatFix & msgGPS, vn::sensors::CompositeData & cd, ros::Time & time,
+  sensor_msgs::msg::NavSatFix & msgGPS, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgGPS.header.stamp = time;
@@ -721,23 +717,23 @@ void fill_gps_message(
       // mark gps fix as not available if the outputted standard deviation is 0
       if (cd.positionUncertaintyEstimated() != 0.0) {
         // Position available
-        msgGPS.status.status = sensor_msgs::NavSatStatus::STATUS_FIX;
+        msgGPS.status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
       } else {
         // position not detected
-        msgGPS.status.status = sensor_msgs::NavSatStatus::STATUS_NO_FIX;
+        msgGPS.status.status = sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
       }
 
       // add the type of covariance to the gps message
-      msgGPS.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+      msgGPS.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
     } else {
-      msgGPS.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+      msgGPS.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
     }
   }
 }
 
 //Helper function to create odometry message
 void fill_odom_message(
-  nav_msgs::Odometry & msgOdom, vn::sensors::CompositeData & cd, ros::Time & time,
+  nav_msgs::msg::Odometry & msgOdom, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgOdom.header.stamp = time;
@@ -749,7 +745,7 @@ void fill_odom_message(
     vec3d pos = cd.positionEstimatedEcef();
 
     if (!user_data->initial_position_set) {
-      ROS_INFO("Set initial position to %f %f %f", pos[0], pos[1], pos[2]);
+      RCLCPP_INFO(node->get_logger(),  "Set initial position to %f %f %f", pos[0], pos[1], pos[2]);
       user_data->initial_position_set = true;
       user_data->initial_position.x = pos[0];
       user_data->initial_position.y = pos[1];
@@ -910,7 +906,7 @@ void fill_odom_message(
 
 //Helper function to create temperature message
 void fill_temp_message(
-  sensor_msgs::Temperature & msgTemp, vn::sensors::CompositeData & cd, ros::Time & time,
+  sensor_msgs::msg::Temperature & msgTemp, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgTemp.header.stamp = time;
@@ -923,7 +919,7 @@ void fill_temp_message(
 
 //Helper function to create pressure message
 void fill_pres_message(
-  sensor_msgs::FluidPressure & msgPres, vn::sensors::CompositeData & cd, ros::Time & time,
+  sensor_msgs::msg::FluidPressure & msgPres, vn::sensors::CompositeData & cd, rclcpp::Time & time,
   UserData * user_data)
 {
   msgPres.header.stamp = time;
@@ -936,14 +932,14 @@ void fill_pres_message(
 
 //Helper function to create ins message
 void fill_ins_message(
-  vectornav::Ins & msgINS, vn::sensors::CompositeData & cd, ros::Time & time, UserData * user_data)
+  vectornav::msg::Ins & msgINS, vn::sensors::CompositeData & cd, rclcpp::Time & time, UserData * user_data)
 {
   msgINS.header.stamp = time;
   msgINS.header.frame_id = user_data->frame_id;
 
   if (cd.hasInsStatus()) {
     InsStatus insStatus = cd.insStatus();
-    msgINS.insStatus = static_cast<uint16_t>(insStatus);
+    msgINS.ins_status = static_cast<uint16_t>(insStatus);
   }
 
   if (cd.hasTow()) {
@@ -958,7 +954,7 @@ void fill_ins_message(
     TimeUtc utcTime = cd.timeUtc();
     char * utcTimeBytes = reinterpret_cast<char *>(&utcTime);
     //msgINS.utcTime bytes are in Little Endian Byte Order
-    std::memcpy(&msgINS.utcTime, utcTimeBytes, 8);
+    std::memcpy(&msgINS.utc_time, utcTimeBytes, 8);
   }
 
   if (cd.hasYawPitchRoll()) {
@@ -977,29 +973,29 @@ void fill_ins_message(
 
   if (cd.hasVelocityEstimatedNed()) {
     vec3f nedVel = cd.velocityEstimatedNed();
-    msgINS.nedVelX = nedVel[0];
-    msgINS.nedVelY = nedVel[1];
-    msgINS.nedVelZ = nedVel[2];
+    msgINS.ned_vel_x = nedVel[0];
+    msgINS.ned_vel_y = nedVel[1];
+    msgINS.ned_vel_z = nedVel[2];
   }
 
   if (cd.hasAttitudeUncertainty()) {
     vec3f attUncertainty = cd.attitudeUncertainty();
-    msgINS.attUncertainty[0] = attUncertainty[0];
-    msgINS.attUncertainty[1] = attUncertainty[1];
-    msgINS.attUncertainty[2] = attUncertainty[2];
+    msgINS.att_uncertainty[0] = attUncertainty[0];
+    msgINS.att_uncertainty[1] = attUncertainty[1];
+    msgINS.att_uncertainty[2] = attUncertainty[2];
   }
 
   if (cd.hasPositionUncertaintyEstimated()) {
-    msgINS.posUncertainty = cd.positionUncertaintyEstimated();
+    msgINS.pos_uncertainty = cd.positionUncertaintyEstimated();
   }
 
   if (cd.hasVelocityUncertaintyEstimated()) {
-    msgINS.velUncertainty = cd.velocityUncertaintyEstimated();
+    msgINS.vel_uncertainty = cd.velocityUncertaintyEstimated();
   }
 }
 
-static ros::Time get_time_stamp(
-  vn::sensors::CompositeData & cd, UserData * user_data, const ros::Time & ros_time)
+static rclcpp::Time get_time_stamp(
+  vn::sensors::CompositeData & cd, UserData * user_data, const rclcpp::Time & ros_time)
 {
   if (!cd.hasTimeStartup() || !user_data->adjust_ros_timestamp) {
     return (ros_time);  // don't adjust timestamp
@@ -1015,12 +1011,12 @@ static ros::Time get_time_stamp(
 
   if (!validateSensorTimestamp(sensor_time, user_data))
   {
-    return ros::Time(0);
+    return rclcpp::Time(0);
   }
 
 
   // difference between node startup and current ROS time
-  const double ros_dt = (ros_time - user_data->ros_start_time).toSec();
+  const double ros_dt = (ros_time - user_data->ros_start_time).seconds();
 
   // Do not use ros_dt to calculate average_time_difference if it is smaller than last measurement
   if (ros_dt > user_data->biggest_ros_dt)
@@ -1035,13 +1031,13 @@ static ros::Time get_time_stamp(
   }
   else
   {
-    ROS_WARN("WARNING: ros_dt: %f is smaller than biggest_ros_dt: %f."
+    RCLCPP_WARN(node->get_logger(),  "WARNING: ros_dt: %f is smaller than biggest_ros_dt: %f."
       "This ros_dt will not be used to calculate average_time_difference", ros_dt, user_data->biggest_ros_dt);
   }
 
   // adjust sensor time by average difference to ROS time
-  const ros::Time adj_time =
-    user_data->ros_start_time + ros::Duration(user_data->average_time_difference + sensor_time);
+  const rclcpp::Time adj_time =
+    user_data->ros_start_time + rclcpp::Duration(std::chrono::microseconds(static_cast<uint64_t>(1e6*(user_data->average_time_difference + sensor_time))));
   return (adj_time);
 }
 
@@ -1054,11 +1050,11 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
   static unsigned long long pkg_count = 0;
 
   // evaluate time first, to have it as close to the measurement time as possible
-  const ros::Time ros_time = ros::Time::now();
+  const rclcpp::Time ros_time = node->get_clock()->now();
 
   vn::sensors::CompositeData cd = vn::sensors::CompositeData::parse(p);
   UserData * user_data = static_cast<UserData *>(userData);
-  ros::Time time = get_time_stamp(cd, user_data, ros_time);
+  rclcpp::Time time = get_time_stamp(cd, user_data, ros_time);
 
   // Only publish if timestamp did not go back in time
   if (newest_timestamp < time)
@@ -1066,12 +1062,12 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
     newest_timestamp = time;
     // IMU
     std::unique_lock<std::mutex> lock(mtx_samples);
-    if (((pkg_count % user_data->imu_stride) == 0 && pubIMU.getNumSubscribers() > 0) || take_samples) {
-      sensor_msgs::Imu msgIMU;
+    if (((pkg_count % user_data->imu_stride) == 0 && pubIMU->get_subscription_count() > 0) || take_samples) {
+      sensor_msgs::msg::Imu msgIMU;
       if (fill_imu_message(msgIMU, cd, time, user_data) == true)
       {
         if ((pkg_count % user_data->imu_stride) == 0)
-          pubIMU.publish(msgIMU);
+          pubIMU->publish(msgIMU);
         if (take_samples)
           samples.push_back({msgIMU.linear_acceleration.x, msgIMU.linear_acceleration.y, msgIMU.linear_acceleration.z});
       }
@@ -1080,57 +1076,57 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
     
     if ((pkg_count % user_data->output_stride) == 0) {
       // Magnetic Field
-      if (pubMag.getNumSubscribers() > 0) {
-        sensor_msgs::MagneticField msgMag;
+      if (pubMag->get_subscription_count() > 0) {
+        sensor_msgs::msg::MagneticField msgMag;
         fill_mag_message(msgMag, cd, time, user_data);
-        pubMag.publish(msgMag);
+        pubMag->publish(msgMag);
       }
 
       // Temperature
-      if (pubTemp.getNumSubscribers() > 0) {
-        sensor_msgs::Temperature msgTemp;
+      if (pubTemp->get_subscription_count() > 0) {
+        sensor_msgs::msg::Temperature msgTemp;
         fill_temp_message(msgTemp, cd, time, user_data);
-        pubTemp.publish(msgTemp);
+        pubTemp->publish(msgTemp);
       }
 
       // Barometer
-      if (pubPres.getNumSubscribers() > 0) {
-        sensor_msgs::FluidPressure msgPres;
+      if (pubPres->get_subscription_count() > 0) {
+        sensor_msgs::msg::FluidPressure msgPres;
         fill_pres_message(msgPres, cd, time, user_data);
-        pubPres.publish(msgPres);
+        pubPres->publish(msgPres);
       }
 
       // GPS
       if (
         user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-        pubGPS.getNumSubscribers() > 0) {
-        sensor_msgs::NavSatFix msgGPS;
+        pubGPS->get_subscription_count() > 0) {
+        sensor_msgs::msg::NavSatFix msgGPS;
         fill_gps_message(msgGPS, cd, time, user_data);
-        pubGPS.publish(msgGPS);
+        pubGPS->publish(msgGPS);
       }
 
       // Odometry
       if (
         user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-        pubOdom.getNumSubscribers() > 0) {
-        nav_msgs::Odometry msgOdom;
+        pubOdom->get_subscription_count() > 0) {
+        nav_msgs::msg::Odometry msgOdom;
         fill_odom_message(msgOdom, cd, time, user_data);
-        pubOdom.publish(msgOdom);
+        pubOdom->publish(msgOdom);
       }
 
       // INS
       if (
         user_data->device_family != VnSensor::Family::VnSensor_Family_Vn100 &&
-        pubIns.getNumSubscribers() > 0) {
-        vectornav::Ins msgINS;
+        pubIns->get_subscription_count() > 0) {
+        vectornav::msg::Ins msgINS;
         fill_ins_message(msgINS, cd, time, user_data);
-        pubIns.publish(msgINS);
+        pubIns->publish(msgINS);
       }
     }
   }
   else
   {
-    ROS_WARN("IMU message filtered, timestamp went back in time");
+    RCLCPP_WARN(node->get_logger(),  "IMU message filtered, timestamp went back in time");
   }
   pkg_count += 1;
 }
@@ -1154,7 +1150,7 @@ bool validateSensorTimestamp(const double sensor_time, UserData * user_data)
   // Do not calcuate timestamp if difference between current and previous timestamp is higher than expected
   if (std::abs(sensor_time - user_data->last_sensor_time) > user_data->maximum_imu_timestamp_difference)
   {
-    ROS_WARN("WARNING: difference between sensor_time: %f and last_sensor_time: %f is bigger than "
+    RCLCPP_WARN(node->get_logger(),  "WARNING: difference between sensor_time: %f and last_sensor_time: %f is bigger than "
       "maximum_imu_timestamp_difference: %f. Returning an invalid timestamp to reject "
        "this measurement", sensor_time, user_data->last_sensor_time, user_data->maximum_imu_timestamp_difference);
     isValid = false;
@@ -1167,7 +1163,7 @@ bool validateSensorTimestamp(const double sensor_time, UserData * user_data)
     // Do not calcuate timestamp nor update newest_sensor_time if sensor_time is smaller than last measurement
     if (sensor_time < user_data->newest_sensor_time)
     {
-      ROS_WARN("WARNING: sensor_time: %f is smaller than newest_sensor_time: %f."
+      RCLCPP_WARN(node->get_logger(),  "WARNING: sensor_time: %f is smaller than newest_sensor_time: %f."
         "Returning an invalid timestamp to reject this measurement", sensor_time, user_data->newest_sensor_time);
       isValid = false;
     }
