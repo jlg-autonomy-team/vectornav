@@ -7,7 +7,7 @@
             "cStandard": "c11",
             "cppStandard": "gnu++14",
             "includePath": [
-                "/opt/ros/melodic/include",
+                "/opt/ros/humble/include/**",
                 "${workspaceFolder}/**"
             ]
         }
