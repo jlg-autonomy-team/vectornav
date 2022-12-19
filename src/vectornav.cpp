@@ -13,26 +13,28 @@ bool optimize_serial_communication(std::string const & portName)
 {
   int portFd = -1;
 
-  ROS_DEBUG_NAMED("serial_optimizer", "Open port for optimization");
+  auto logger = rclcpp::get_logger("serial_optimizer");
+
+  RCLCPP_INFO(logger, "Open port for optimization");
   portFd = ::open(portName.c_str(), O_RDWR | O_NOCTTY);
 
   if (portFd == -1) {
-    ROS_WARN_NAMED("serial_optimizer", "Can't open port for optimization");
+    RCLCPP_WARN(logger, "Can't open port for optimization");
     return false;
   }
 
-  ROS_DEBUG_NAMED("serial_optimizer", "Setting port to ASYNCY_LOW_LATENCY");
+  RCLCPP_DEBUG(logger, "Setting port to ASYNCY_LOW_LATENCY");
   struct serial_struct serial;
   ioctl(portFd, TIOCGSERIAL, &serial);
   serial.flags |= ASYNC_LOW_LATENCY;
   ioctl(portFd, TIOCSSERIAL, &serial);
-  ROS_DEBUG_NAMED("serial_optimizer", "Closing port");
+  RCLCPP_DEBUG(logger, "Closing port");
   ::close(portFd);
   return true;
 }
 #elif
 bool optimize_serial_communication(str::string portName) {
-  ROS_WARN_NAMED("serial_optimizer", 
+  RCLCPP_DEBUG(logger, 
                  "Serial port low latency optimization not implemented on build platform");
   return true;
 }
@@ -41,148 +43,147 @@ bool optimize_serial_communication(str::string portName) {
 namespace vectornav
 {
 
-Vectornav::Vectornav(ros::NodeHandle & nh, ros::NodeHandle & pnh)
-: nh_{nh}, pnh_{pnh}, params_{}
+Vectornav::Vectornav()
+: Node("vectornav")
 , vs_{}
 {
-  ROS_INFO_NAMED("vectornav", "Initializing vectornav device");
+  RCLCPP_INFO(get_logger(), "Initializing vectornav device");
 
   // Read parameters from the parameter server
-  ROS_DEBUG_NAMED("vectornav", "Reading parameters from server");
+  RCLCPP_DEBUG(get_logger(), "Reading parameters from server");
   read_parameters();
 
   // Optimize serial low latencty communication
-  ROS_DEBUG_NAMED("vectornav", "Optimize serial low latencty communication");
+  RCLCPP_DEBUG(get_logger(), "Optimize serial low latencty communication");
   optimize_serial_communication(params_.port);
 
   // Connect to the device
-  ROS_INFO_NAMED("vectornav", "Connecting to: %s @ %d", params_.port.c_str(), params_.baudrate);
+  RCLCPP_INFO(get_logger(), "Connecting to: %s @ %d", params_.port.c_str(), params_.baudrate);
   connect_device(params_.port, params_.baudrate);
 
-  ROS_DEBUG_NAMED("vectornav", "Advertising topics");
+  RCLCPP_DEBUG(get_logger(), "Advertising topics");
   advertise_topics();
 
-  ROS_DEBUG_NAMED("vectornav", "Advertising services");
+  RCLCPP_DEBUG(get_logger(), "Advertising services");
   advertise_services();
 
-  ROS_DEBUG_NAMED("vectornav", "Configuring device");
+  RCLCPP_DEBUG(get_logger(), "Configuring device");
   configure_device();
 
-  ROS_DEBUG_NAMED("vectornav", "Finished initialization");
+  RCLCPP_DEBUG(get_logger(), "Finished initialization");
 }
 
-void Vectornav::spin()
+Vectornav::~Vectornav()
 {
-  while (ros::ok())
-    ros::spin();  // Need to make sure we disconnect properly. Check if all ok.
-
-  disconnect_device();
+  // Node has been terminated
+  vs_.unregisterAsyncPacketReceivedHandler();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  RCLCPP_INFO(get_logger(), "Unregisted the Packet Received Handler");
+  vs_.disconnect();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  RCLCPP_INFO(get_logger(), "Device disconnected successfully"); 
 }
 
 void Vectornav::read_parameters()
 {
-  pnh_.param<std::string>("map_frame_id",
-                          params_.map_frame_id,
-                          params_.map_frame_id);
-  pnh_.param<std::string>("frame_id",
-                          params_.imu_frame_id,
-                          params_.imu_frame_id);
-  pnh_.param<bool>("tf_ned_to_enu",
-                   params_.tf_ned_to_enu,
-                   params_.tf_ned_to_enu);
-  pnh_.param<bool>("frame_based_enu",
-                   params_.frame_based_enu,
-                   params_.frame_based_enu);
-  pnh_.param<bool>("tf_ned_to_nwu",
-                   params_.tf_ned_to_nwu,
-                   params_.tf_ned_to_nwu);
-  pnh_.param<bool>("frame_based_nwu",
-                   params_.frame_based_nwu,
-                   params_.frame_based_nwu);
-  pnh_.param<bool>("adjust_ros_timestamp",
-                   params_.adjust_ros_timestamp,
-                   params_.adjust_ros_timestamp);
-  pnh_.param<int>("async_output_rate",
-                  params_.async_output_rate,
-                  params_.async_output_rate);
-  pnh_.param<int>("imu_output_rate",
-                  params_.imu_output_rate,
-                  params_.imu_output_rate);
-  pnh_.param<std::string>("serial_port", 
-                          params_.port, 
-                          params_.port);
-  pnh_.param<int>("serial_baud", 
-                  params_.baudrate, 
-                  params_.baudrate);
-  pnh_.param<int>("fixed_imu_rate",
-                  params_.fixed_imu_rate,
-                  params_.fixed_imu_rate);
-  pnh_.param<int>("max_invalid_packets",
-                  params_.max_invalid_packets,
-                  params_.max_invalid_packets);
+  declare_parameter<std::string>("map_frame_id", params_.map_frame_id);
+  declare_parameter<std::string>("frame_id", params_.imu_frame_id);
+  declare_parameter<bool>("tf_ned_to_enu", params_.tf_ned_to_enu);
+  declare_parameter<bool>("frame_based_enu", params_.frame_based_enu);
+  declare_parameter<bool>("tf_ned_to_nwu", params_.tf_ned_to_nwu);
+  declare_parameter<bool>("frame_based_nwu", params_.frame_based_nwu);
+  declare_parameter<bool>("adjust_ros_timestamp", params_.adjust_ros_timestamp);
+  declare_parameter<int>("async_output_rate", params_.async_output_rate);
+  declare_parameter<int>("imu_output_rate", params_.imu_output_rate);
+  declare_parameter<std::string>("serial_port", params_.port);
+  declare_parameter<int>("serial_baud", params_.baudrate);
+  declare_parameter<int>("fixed_imu_rate", params_.fixed_imu_rate);
+  declare_parameter<int>("max_invalid_packets", params_.max_invalid_packets);
 
-  pnh_.getParam("linear_accel_covariance", params_.linear_accel_covariance);
-  pnh_.getParam("angular_vel_covariance", params_.angular_vel_covariance);
-  pnh_.getParam("orientation_covariance", params_.orientation_covariance); // Unused?
-  has_rotation_reference_frame_ = pnh_.getParam("rotation_reference_frame", params_.rotation_reference_frame);
+  declare_parameter<std::vector<double>>("linear_accel_covariance", params_.linear_accel_covariance);
+  declare_parameter<std::vector<double>>("angular_vel_covariance", params_.angular_vel_covariance);
+  declare_parameter<std::vector<double>>("orientation_covariance", params_.orientation_covariance);
+  declare_parameter<std::vector<double>>("rotation_reference_frame", params_.rotation_reference_frame);
+
+
+  get_parameter("map_frame_id", params_.map_frame_id);
+  get_parameter("frame_id", params_.imu_frame_id);
+  get_parameter("tf_ned_to_enu", params_.tf_ned_to_enu);
+  get_parameter("frame_based_enu", params_.frame_based_enu);
+  get_parameter("tf_ned_to_nwu", params_.tf_ned_to_nwu);
+  get_parameter("frame_based_nwu", params_.frame_based_nwu);
+  get_parameter("adjust_ros_timestamp", params_.adjust_ros_timestamp);
+  get_parameter("async_output_rate", params_.async_output_rate);
+  get_parameter("imu_output_rate", params_.imu_output_rate);
+  get_parameter("serial_port", params_.port);
+  get_parameter("serial_baud", params_.baudrate);
+  get_parameter("fixed_imu_rate", params_.fixed_imu_rate);
+  get_parameter("max_invalid_packets", params_.max_invalid_packets);
+
+  get_parameter("linear_accel_covariance", params_.linear_accel_covariance);
+  get_parameter("angular_vel_covariance", params_.angular_vel_covariance);
+  get_parameter("orientation_covariance", params_.orientation_covariance); // Is it used?
+  get_parameter("rotation_reference_frame", params_.rotation_reference_frame);
 }
 
 void Vectornav::advertise_topics()
 {
-  pub_imu_ = nh_.advertise<sensor_msgs::Imu>("imu/data", 1000);
-  pub_mag_ = nh_.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
-  pub_temp_ = nh_.advertise<sensor_msgs::Temperature>("imu/temperature", 1000);
-  pub_pres_ = nh_.advertise<sensor_msgs::FluidPressure>("imu/atm_pressure", 1000);
+  pub_imu_ = create_publisher<sensor_msgs::msg::Imu>("~/data", rclcpp::SensorDataQoS());
+  pub_mag_ = create_publisher<sensor_msgs::msg::MagneticField>("~/mag", rclcpp::SensorDataQoS());
+  pub_temp_ = create_publisher<sensor_msgs::msg::Temperature>("~/temperature", rclcpp::SensorDataQoS());
+  pub_pres_ = create_publisher<sensor_msgs::msg::FluidPressure>("~/atm_pressure", rclcpp::SensorDataQoS());
 
   // Filter topics (not supported by VN-100)
   if (device_family_ != vn::sensors::VnSensor::Family::VnSensor_Family_Vn100) {
-    pub_gps_ = nh_.advertise<sensor_msgs::NavSatFix>("imu/global_position/raw/fix", 1000);
-    pub_odom_ = nh_.advertise<nav_msgs::Odometry>("imu/odom", 1000);
-    pub_ins_ = nh_.advertise<vectornav::Ins>("imu/INS", 1000);
+    pub_gps_ = create_publisher<sensor_msgs::msg::NavSatFix>("~/global_position/raw/fix", rclcpp::SensorDataQoS());
+    pub_odom_ = create_publisher<nav_msgs::msg::Odometry>("~/odom", rclcpp::SensorDataQoS());
+    pub_ins_ = create_publisher<vectornav::msg::Ins>("~/INS", rclcpp::SensorDataQoS());
   }
 }
 
 void Vectornav::advertise_services()
 {
-  srv_set_horizontal_ = pnh_.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
-    "set_horizontal", std::bind(&Vectornav::set_horizontal, this, std::placeholders::_1, std::placeholders::_2));
+  srv_set_acc_bias_ = create_service<vectornav::srv::SetFrameHorizontal>(
+    "set_acc_bias", std::bind(&Vectornav::set_acc_bias, this, std::placeholders::_1, std::placeholders::_2));
   // Filter unnecessary services (not supported by VN-100)
   if (device_family_ != vn::sensors::VnSensor::Family::VnSensor_Family_Vn100) {
-    srv_reset_odom_ = nh_.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
+    srv_reset_odom_ = create_service<std_srvs::srv::Empty>(
       "reset_odom", std::bind(&Vectornav::reset_odometry, this, std::placeholders::_1, std::placeholders::_2));
   }
 }
 
-bool Vectornav::set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectornav::SetFrameHorizontal::Response & res)
+void Vectornav::set_acc_bias(
+    const std::shared_ptr<vectornav::srv::SetFrameHorizontal::Request> req,
+    std::shared_ptr<vectornav::srv::SetFrameHorizontal::Response> resp)
 {
-  ROS_INFO_NAMED("vectornav", "Set horizontal callback received. Setting horizontal frame.");
+  RCLCPP_INFO(get_logger(), "Set horizontal callback received. Setting horizontal frame.");
   vn::math::mat3f const gain {1., 0., 0.,
                               0., 1., 0.,
                               0., 0., 1.};
   
-  if (req.reset) {
+  if (req->reset) {
     vs_.writeAccelerationCompensation(gain, {0., 0., 0.}, true);
     vs_.writeSettings(true);
 
-    res.success = true;
-    return true;
+    resp->success = true;
+    return;
   }
 
   std::unique_lock<std::mutex> lock(mtx_samples_);
     samples_.clear();
-    samples_.reserve(static_cast<size_t>(req.duration * params_.fixed_imu_rate * 1.5));
+    samples_.reserve(static_cast<size_t>(req->duration * params_.fixed_imu_rate * 1.5));
     take_samples_ = true;
-    auto const start = ros::Time::now();
+    auto const start = now();
   lock.unlock();
 
-  ros::Duration(req.duration).sleep();
+  rclcpp::Duration(std::chrono::microseconds(static_cast<uint64_t>(req->duration*1e6)));
   
   lock.lock();
-    auto const end = ros::Time::now();
+    auto const end = now();
     take_samples_ = false;
     
-    res.samples_taken = samples_.size();
-    res.elapsed_time = (end - start).toSec();
+    resp->samples_taken = samples_.size();
+    resp->elapsed_time = (end - start).seconds();
 
     // Calculate mean of samples
     double bias_x{0.}, bias_y{0.}, bias_z{0.};
@@ -207,32 +208,31 @@ bool Vectornav::set_horizontal(vectornav::SetFrameHorizontal::Request const & re
                               curr.b.y-static_cast<float>(bias_y), 
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
 
-  res.bias_x = static_cast<double>(curr.b.x) - bias_x;
-  res.bias_y = static_cast<double>(curr.b.y) - bias_y;
-  res.bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
+  resp->bias_x = static_cast<double>(curr.b.x) - bias_x;
+  resp->bias_y = static_cast<double>(curr.b.y) - bias_y;
+  resp->bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
 
-  res.covariance_x = covariance_x;
-  res.covariance_y = covariance_y;
-  res.covariance_z = covariance_z;
+  resp->covariance_x = covariance_x;
+  resp->covariance_y = covariance_y;
+  resp->covariance_z = covariance_z;
   
   if (samples_.size() < 10) {
-    ROS_ERROR("Not enough samples taken. Aborting.");
-    res.success = false;
-    return true;
+    RCLCPP_ERROR(get_logger(), "Not enough samples taken. Aborting.");
+    resp->success = false;
   } else {
-    res.success = true;
+    resp->success = true;
     vs_.writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
     vs_.writeSettings(true);
   }
-
-  return true;
 }
 
-bool Vectornav::reset_odometry(std_srvs::Empty::Request const & req, std_srvs::Empty::Response & res)
+void Vectornav::reset_odometry(
+    const std::shared_ptr<std_srvs::srv::Empty::Request> req,
+    std::shared_ptr<std_srvs::srv::Empty::Response> resp)
 {
-  ROS_INFO_NAMED("vectornav", "Reset odometry callback received. Resetting odometry.");
+  RCLCPP_INFO(get_logger(), "Reset odometry callback received. Resetting odometry.");
   initial_position_set_ = false;
-  return true;
+  return;
 }
 
 void Vectornav::connect_device(std::string const & port, int baudrate)
@@ -253,7 +253,7 @@ void Vectornav::connect_device(std::string const & port, int baudrate)
     // Make this variable only accessible in the while loop
     static int i = 0;
     defaultBaudrate = supportedBaudrates[i];
-    ROS_DEBUG_NAMED("vectornav", "Trying to connect with baudrate: %d", defaultBaudrate);
+    RCLCPP_DEBUG(get_logger(), "Trying to connect with baudrate: %d", defaultBaudrate);
     // Default response was too low and retransmit time was too long by default.
     // They would cause errors
     vs_.setResponseTimeoutMs(1000);  // Wait for up to 1000 ms for response
@@ -270,7 +270,7 @@ void Vectornav::connect_device(std::string const & port, int baudrate)
         // reconnects the attached serial port at the new baudrate.
         vs_.changeBaudRate(baudrate);
         // Only makes it here once we have the default correct
-        ROS_DEBUG_NAMED("vectornav", "Successfully connected with current baudrate: %d", vs_.baudrate());
+        RCLCPP_DEBUG(get_logger(), "Successfully connected with current baudrate: %d", vs_.baudrate());
         baudSet = true;
       }
     }
@@ -278,8 +278,8 @@ void Vectornav::connect_device(std::string const & port, int baudrate)
     catch (...) {
       // Disconnect if we had the wrong default and we were connected
       vs_.disconnect();
-      ROS_WARN_NAMED("vectornav", "Failed to connect with baudrate: %d. Trying next baudrate...", defaultBaudrate);
-      ros::Duration(0.2).sleep();
+      RCLCPP_WARN(get_logger(), "Failed to connect with baudrate: %d. Trying next baudrate...", defaultBaudrate);
+      rclcpp::Duration(std::chrono::microseconds(static_cast<uint64_t>(0.2*1e6)));
     }
     // Increment the default iterator
     i++;
@@ -292,34 +292,23 @@ void Vectornav::connect_device(std::string const & port, int baudrate)
 
   // Now we verify connection (Should be good if we made it this far)
   if (vs_.verifySensorConnectivity()) {
-    ROS_INFO_NAMED("vectornav", "Successfully connected: %s @ %d", vs_.port().c_str(), vs_.baudrate());
+    RCLCPP_INFO(get_logger(), "Successfully connected: %s @ %d", vs_.port().c_str(), vs_.baudrate());
   } else {
-    ROS_ERROR_NAMED("vectornav", "No device communication");
-    ROS_WARN_NAMED("vectornav", "Please input a valid baud rate. Valid are:");
-    ROS_WARN_NAMED("vectornav", "9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
-    ROS_WARN_NAMED("vectornav", "With the test IMU 128000 did not work, all others worked fine.");
+    RCLCPP_ERROR(get_logger(), "No device communication");
+    RCLCPP_WARN(get_logger(), "Please input a valid baud rate. Valid are:");
+    RCLCPP_WARN(get_logger(), "9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
+    RCLCPP_WARN(get_logger(), "With the test IMU 128000 did not work, all others worked fine.");
   }
   // Query the sensor's model number.
   std::string mn = vs_.readModelNumber();
   std::string fv = vs_.readFirmwareVersion();
   uint32_t hv = vs_.readHardwareRevision();
   uint32_t sn = vs_.readSerialNumber();
-  ROS_INFO_NAMED("vectornav", "Model Number: %s, Firmware Version: %s", mn.c_str(), fv.c_str());
-  ROS_INFO_NAMED("vectornav", "Hardware Revision : %d, Serial Number : %d", hv, sn);
+  RCLCPP_INFO(get_logger(), "Model Number: %s, Firmware Version: %s", mn.c_str(), fv.c_str());
+  RCLCPP_INFO(get_logger(), "Hardware Revision : %d, Serial Number : %d", hv, sn);
 
   // Set the device info for passing to the packet callback function
   device_family_ = vs_.determineDeviceFamily();
-}
-
-void Vectornav::disconnect_device()
-{
-  // Node has been terminated
-  vs_.unregisterAsyncPacketReceivedHandler();
-  ros::Duration(0.1).sleep();
-  ROS_INFO_NAMED("vectornav", "Unregisted the Packet Received Handler");
-  vs_.disconnect();
-  ros::Duration(0.1).sleep();
-  ROS_INFO_NAMED("vectornav", "Device disconnected successfully");  
 }
 
 void Vectornav::configure_device()
@@ -329,16 +318,16 @@ void Vectornav::configure_device()
     package_rate = allowed_rate;
     if ((package_rate % params_.async_output_rate) == 0 && (package_rate % params_.imu_output_rate) == 0) break;
   }
-  ROS_ASSERT_MSG(
-    package_rate != 0,
-    "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
-    "200 Hz",
-    params_.imu_output_rate, params_.async_output_rate);
+  if (package_rate == 0)
+    RCLCPP_ERROR(get_logger(), 
+      "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2,"
+      " 4, 5, 10, 20, 25, 40, 50, 100, 200 Hz",
+      params_.imu_output_rate, params_.async_output_rate);
   imu_stride_ = static_cast<unsigned int>(package_rate / params_.imu_output_rate);
   output_stride_ = static_cast<unsigned int>(package_rate / params_.async_output_rate);
-  ROS_INFO_NAMED("vectornav", "Package Receive Rate: %d Hz", package_rate);
-  ROS_INFO_NAMED("vectornav", "General Publish Rate: %d Hz", params_.async_output_rate);
-  ROS_INFO_NAMED("vectornav", "IMU Publish Rate: %d Hz", params_.imu_output_rate);
+  RCLCPP_INFO(get_logger(), "Package Receive Rate: %d Hz", package_rate);
+  RCLCPP_INFO(get_logger(), "General Publish Rate: %d Hz", params_.async_output_rate);
+  RCLCPP_INFO(get_logger(), "IMU Publish Rate: %d Hz", params_.imu_output_rate);
 
   // Arbitrary value that indicates the maximum expected time between consecutive IMU messages
   maximum_imu_timestamp_difference_ = (1 / static_cast<double>(params_.imu_output_rate)) * 10;
@@ -353,7 +342,7 @@ void Vectornav::configure_device()
     params_.fixed_imu_rate / package_rate,  // update rate [ms]
     COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
       COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |
-      (adjust_ros_timestamp_ ? COMMONGROUP_TIMESTARTUP : 0),
+      (params_.adjust_ros_timestamp ? COMMONGROUP_TIMESTARTUP : 0),
     TIMEGROUP_NONE | TIMEGROUP_GPSTOW | TIMEGROUP_GPSWEEK | TIMEGROUP_TIMEUTC, IMUGROUP_NONE,
     GPSGROUP_NONE,
     ATTITUDEGROUP_YPRU,  //<-- returning yaw pitch roll uncertainties
@@ -372,7 +361,7 @@ void Vectornav::configure_device()
 
   // Setting reference frame
   vn::math::mat3f current_rotation_reference_frame { vs_.readReferenceFrameRotation() };
-  ROS_INFO_STREAM_NAMED("vectornav", "Current rotation reference frame: " << current_rotation_reference_frame);
+  RCLCPP_INFO_STREAM(get_logger(), "Current rotation reference frame: " << current_rotation_reference_frame);
 
   if (has_rotation_reference_frame_ == true) {
     vn::math::mat3f const matrix_rotation_reference_frame {
@@ -393,17 +382,17 @@ void Vectornav::configure_device()
       || current_rotation_reference_frame.e11 != matrix_rotation_reference_frame.e11
       || current_rotation_reference_frame.e22 != matrix_rotation_reference_frame.e22)
     {
-      ROS_INFO_STREAM("Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
+      RCLCPP_INFO_STREAM(get_logger(), "Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
       vs_.writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
       current_rotation_reference_frame = vs_.readReferenceFrameRotation();
-      ROS_INFO_STREAM("New rotation reference frame: " << current_rotation_reference_frame);
-      ROS_INFO_STREAM("Restarting device to save new reference frame");
+      RCLCPP_INFO_STREAM(get_logger(), "New rotation reference frame: " << current_rotation_reference_frame);
+      RCLCPP_INFO_STREAM(get_logger(), "Restarting device to save new reference frame");
       vs_.writeSettings(true);
       vs_.reset();
     }
     else
     {
-      ROS_DEBUG_STREAM_NAMED("vectornav", "Current rotation reference frame is the same as the desired one: " << matrix_rotation_reference_frame);
+      RCLCPP_DEBUG_STREAM(get_logger(), "Current rotation reference frame is the same as the desired one: " << matrix_rotation_reference_frame);
     }
   }
 
@@ -419,23 +408,23 @@ void Vectornav::binary_async_message_received(void* aux, vn::protocol::uart::Pac
 void Vectornav::binary_async_message_received_(vn::protocol::uart::Packet & p, size_t index)
 {  
   // evaluate time first, to have it as close to the measurement time as possible
-  const ros::Time ros_time = ros::Time::now();
+  rclcpp::Time const ros_time = now();
 
   vn::sensors::CompositeData cd = vn::sensors::CompositeData::parse(p);
-  ros::Time time = get_timestamp(cd, ros_time);
+  rclcpp::Time const time = get_timestamp(cd, ros_time);
 
     // Only publish if timestamp did not go back in time
-  if (newest_timestamp_ < time)
+  if (newest_timestamp_.seconds() < time.seconds())
   {
     newest_timestamp_ = time;
     // IMU
     std::unique_lock<std::mutex> lock(mtx_samples_);
-    if (((pkg_count_ % imu_stride_) == 0 && pub_imu_.getNumSubscribers() > 0) || take_samples_) {
-      sensor_msgs::Imu msgIMU;
+    if (((pkg_count_ % imu_stride_) == 0 && pub_imu_->get_subscription_count() > 0) || take_samples_) {
+      sensor_msgs::msg::Imu msgIMU;
       if (fill_imu_msg(cd, msgIMU, time) == true)
       {
         if ((pkg_count_ % imu_stride_) == 0)
-          pub_imu_.publish(msgIMU);
+          pub_imu_->publish(msgIMU);
         if (take_samples_)
           samples_.push_back({msgIMU.linear_acceleration.x, msgIMU.linear_acceleration.y, msgIMU.linear_acceleration.z});
       }
@@ -444,64 +433,64 @@ void Vectornav::binary_async_message_received_(vn::protocol::uart::Packet & p, s
 
     if ((pkg_count_ % output_stride_) == 0) {
       // Magnetic Field
-      if (pub_mag_.getNumSubscribers() > 0) {
-        sensor_msgs::MagneticField mag_msg{};
+      if (pub_mag_->get_subscription_count() > 0) {
+        sensor_msgs::msg::MagneticField mag_msg{};
         fill_mag_msg(cd, mag_msg, time);
-        pub_mag_.publish(mag_msg);
+        pub_mag_->publish(mag_msg);
       }
 
       // Temperature
-      if (pub_temp_.getNumSubscribers() > 0) {
-        sensor_msgs::Temperature temp_msg{};
+      if (pub_temp_->get_subscription_count() > 0) {
+        sensor_msgs::msg::Temperature temp_msg{};
         fill_temp_msg(cd, temp_msg, time);
-        pub_temp_.publish(temp_msg);
+        pub_temp_->publish(temp_msg);
       }
 
       // Barometer
-      if (pub_pres_.getNumSubscribers() > 0) {
-        sensor_msgs::FluidPressure pres_msg{};
+      if (pub_pres_->get_subscription_count() > 0) {
+        sensor_msgs::msg::FluidPressure pres_msg{};
         fill_pres_msg(cd, pres_msg, time);
-        pub_pres_.publish(pres_msg);
+        pub_pres_->publish(pres_msg);
       }
 
       // GPS
       if (
         device_family_ != vn::sensors::VnSensor::Family::VnSensor_Family_Vn100 &&
-        pub_gps_.getNumSubscribers() > 0) {
-        sensor_msgs::NavSatFix gps_msg{};
+        pub_gps_->get_subscription_count() > 0) {
+        sensor_msgs::msg::NavSatFix gps_msg{};
         fill_gps_msg(cd, gps_msg, time);
-        pub_gps_.publish(gps_msg);
+        pub_gps_->publish(gps_msg);
       }
 
       // Odometry
       if (
         device_family_ != vn::sensors::VnSensor::Family::VnSensor_Family_Vn100 &&
-        pub_odom_.getNumSubscribers() > 0) {
-        nav_msgs::Odometry msgOdom{};
+        pub_odom_->get_subscription_count() > 0) {
+        nav_msgs::msg::Odometry msgOdom{};
         fill_odom_msg(cd, msgOdom, time);
-        pub_odom_.publish(msgOdom);
+        pub_odom_->publish(msgOdom);
       }
 
       // INS
       if (
         device_family_ != vn::sensors::VnSensor::Family::VnSensor_Family_Vn100 &&
-        pub_ins_.getNumSubscribers() > 0) {
-        vectornav::Ins ins_msg{};
+        pub_ins_->get_subscription_count() > 0) {
+        vectornav::msg::Ins ins_msg{};
         fill_ins_msg(cd, ins_msg, time);
-        pub_ins_.publish(ins_msg);
+        pub_ins_->publish(ins_msg);
       }
     }
   }
   else
   {
-    ROS_WARN("IMU message filtered, timestamp went back in time");
+    RCLCPP_WARN(get_logger(), "IMU message filtered, timestamp went back in time");
   }
   ++pkg_count_;
 }
 
-ros::Time Vectornav::get_timestamp(vn::sensors::CompositeData & cd, const ros::Time & ros_time)
+rclcpp::Time Vectornav::get_timestamp(vn::sensors::CompositeData & cd, const rclcpp::Time & ros_time)
 {
-  if (!cd.hasTimeStartup() || !adjust_ros_timestamp_) {
+  if (!cd.hasTimeStartup() || !params_.adjust_ros_timestamp) {
     return (ros_time);  // don't adjust timestamp
   }
 
@@ -514,10 +503,10 @@ ros::Time Vectornav::get_timestamp(vn::sensors::CompositeData & cd, const ros::T
   }
 
   if (!validate_timestamp(sensor_time))
-    return ros::Time(0);
+    return rclcpp::Time(0);
 
   // difference between node startup and current ROS time
-  const double ros_dt = (ros_time - ros_start_time_).toSec();
+  const double ros_dt = (ros_time - ros_start_time_).seconds();
 
   // Do not use ros_dt to calculate average_time_difference if it is smaller than last measurement
   if (ros_dt > biggest_ros_dt_)
@@ -531,12 +520,14 @@ ros::Time Vectornav::get_timestamp(vn::sensors::CompositeData & cd, const ros::T
   }
   else
   {
-    ROS_WARN("WARNING: ros_dt: %f is smaller than biggest_ros_dt: %f."
+    RCLCPP_WARN(get_logger(), "WARNING: ros_dt: %f is smaller than biggest_ros_dt: %f."
       "This ros_dt will not be used to calculate average_time_difference", ros_dt, biggest_ros_dt_);
   }
 
   // adjust sensor time by average difference to ROS time
-  const ros::Time adj_time { ros_start_time_ + ros::Duration(average_time_difference_ + sensor_time) };
+  const rclcpp::Time adj_time { 
+    ros_start_time_ + rclcpp::Duration(std::chrono::microseconds(static_cast<uint64_t>((average_time_difference_ + sensor_time)*1e6)))
+  };
 
   return adj_time;
 }
@@ -548,7 +539,7 @@ bool Vectornav::validate_timestamp(double const sensor_time)
   // Do not calcuate timestamp if difference between current and previous timestamp is higher than expected
   if (std::abs(sensor_time - last_sensor_time_) > maximum_imu_timestamp_difference_)
   {
-    ROS_WARN("WARNING: difference between sensor_time: %f and last_sensor_time: %f is bigger than "
+    RCLCPP_WARN(get_logger(), "WARNING: difference between sensor_time: %f and last_sensor_time: %f is bigger than "
       "maximum_imu_timestamp_difference: %f. Returning an invalid timestamp to reject "
        "this measurement", sensor_time, last_sensor_time_, maximum_imu_timestamp_difference_);
     isValid = false;
@@ -561,7 +552,7 @@ bool Vectornav::validate_timestamp(double const sensor_time)
     // Do not calcuate timestamp nor update newest_sensor_time if sensor_time is smaller than last measurement
     if (sensor_time < newest_sensor_time_)
     {
-      ROS_WARN("WARNING: sensor_time: %f is smaller than newest_sensor_time: %f."
+      RCLCPP_WARN(get_logger(), "WARNING: sensor_time: %f is smaller than newest_sensor_time: %f."
         "Returning an invalid timestamp to reject this measurement", sensor_time, newest_sensor_time_);
       isValid = false;
     }
@@ -574,7 +565,7 @@ bool Vectornav::validate_timestamp(double const sensor_time)
   return isValid;
 }
 
-bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu & imu_msg, const ros::Time & ros_time)
+bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::Imu & imu_msg, const rclcpp::Time & ros_time)
 {
   imu_msg.header.stamp = ros_time;
   imu_msg.header.frame_id = params_.imu_frame_id;
@@ -607,13 +598,16 @@ bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu &
     if (!validate_quaternion(q) || !validate_vector(ar) || !validate_vector(al))
     {
         invalid_data_++;
-        ROS_WARN_THROTTLE(1, "Invalid data (%d until now). Orientation: %f, %f, %f, %f. Angular velocity: %f, %f, %f. Linear Acceleration: %f, %f, %f",
-                    invalid_data_, q[0], q[1], q[2], q[3],
-                    ar[0], ar[1], ar[2], al[0], al[1], al[2]);
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, 
+          "Invalid data (%d until now). Orientation: %f, %f, %f, %f. "
+                                       "Angular velocity: %f, %f, %f. "
+                                       "Linear Acceleration: %f, %f, %f",
+          invalid_data_, q[0], q[1], q[2], q[3],
+          ar[0], ar[1], ar[2], al[0], al[1], al[2]);
 
         // Shutdown node if more than max_invalid_packets are received consecutively
         if ((max_invalid_packets_ != -1) && (invalid_data_ >= max_invalid_packets_))
-          ros::shutdown();
+          rclcpp::shutdown();
 
         return false;
     }
@@ -624,7 +618,7 @@ bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu &
       if (params_.tf_ned_to_enu) {
         // If we want the orientation to be based on the reference label on the imu
         tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
-        geometry_msgs::Quaternion quat_msg;
+        geometry_msgs::msg::Quaternion quat_msg;
 
         if (params_.frame_based_enu) {
           // Create a rotation from NED -> ENU
@@ -673,7 +667,7 @@ bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu &
       }
       else if (params_.tf_ned_to_nwu) {
         tf2::Quaternion tf2_quat(q[0], q[1], q[2], q[3]);
-        geometry_msgs::Quaternion quat_msg;
+        geometry_msgs::msg::Quaternion quat_msg;
 
         if (params_.frame_based_nwu) {
           // Create a rotation from NED -> NWU
@@ -739,11 +733,11 @@ bool Vectornav::fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu &
     }
     return true;
   }
-  ROS_WARN("IMU invalid data, discarding message");
+  RCLCPP_WARN(get_logger(), "IMU invalid data, discarding message");
   return false;
 }
 
-bool Vectornav::fill_mag_msg(vn::sensors::CompositeData & cd, sensor_msgs::MagneticField & mag_msg, const ros::Time & ros_time)
+bool Vectornav::fill_mag_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::MagneticField & mag_msg, const rclcpp::Time & ros_time)
 {
   mag_msg.header.stamp = ros_time;
   mag_msg.header.frame_id = params_.imu_frame_id;
@@ -755,9 +749,10 @@ bool Vectornav::fill_mag_msg(vn::sensors::CompositeData & cd, sensor_msgs::Magne
     mag_msg.magnetic_field.y = mag[1];
     mag_msg.magnetic_field.z = mag[2];
   }
+  return true;
 }
 
-bool Vectornav::fill_temp_msg(vn::sensors::CompositeData & cd, sensor_msgs::Temperature & temp_msg, const ros::Time & ros_time)
+bool Vectornav::fill_temp_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::Temperature & temp_msg, const rclcpp::Time & ros_time)
 {
   temp_msg.header.stamp = ros_time;
   temp_msg.header.frame_id = params_.imu_frame_id;
@@ -765,18 +760,21 @@ bool Vectornav::fill_temp_msg(vn::sensors::CompositeData & cd, sensor_msgs::Temp
     float const temp { cd.temperature() };
     temp_msg.temperature = static_cast<double>(temp);
   }
+  return true;
 }
 
-bool Vectornav::fill_pres_msg(vn::sensors::CompositeData & cd, sensor_msgs::FluidPressure & pres_msg, const ros::Time & ros_time)
+bool Vectornav::fill_pres_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::FluidPressure & pres_msg, const rclcpp::Time & ros_time)
 {
   pres_msg.header.stamp = ros_time;
   pres_msg.header.frame_id = params_.imu_frame_id;
   if (cd.hasPressure()) {
     float const pres { cd.pressure() };
     pres_msg.fluid_pressure = static_cast<double>(pres);
-  }}
+  }
+  return true;
+}
 
-bool Vectornav::fill_gps_msg(vn::sensors::CompositeData & cd, sensor_msgs::NavSatFix & gps_msg, const ros::Time & ros_time)
+bool Vectornav::fill_gps_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::NavSatFix & gps_msg, const rclcpp::Time & ros_time)
 {
   // Check with vectornav different of VN-100
   gps_msg.header.stamp = ros_time;
@@ -799,21 +797,22 @@ bool Vectornav::fill_gps_msg(vn::sensors::CompositeData & cd, sensor_msgs::NavSa
       // mark gps fix as not available if the outputted standard deviation is 0
       if (cd.positionUncertaintyEstimated() != 0.0) {
         // Position available
-        gps_msg.status.status = sensor_msgs::NavSatStatus::STATUS_FIX;
+        gps_msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_FIX;
       } else {
         // position not detected
-        gps_msg.status.status = sensor_msgs::NavSatStatus::STATUS_NO_FIX;
+        gps_msg.status.status = sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
       }
 
       // add the type of covariance to the gps message
-      gps_msg.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+      gps_msg.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
     } else {
-      gps_msg.position_covariance_type = sensor_msgs::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+      gps_msg.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
     }
   }
+  return true;
 }
 
-bool Vectornav::fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::Odometry & odom_msg, const ros::Time & ros_time)
+bool Vectornav::fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::msg::Odometry & odom_msg, const rclcpp::Time & ros_time)
 {
   // Check with vectornav different of VN-100
   odom_msg.header.stamp = ros_time;
@@ -825,7 +824,7 @@ bool Vectornav::fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::Odometr
     vn::math::vec3d pos { cd.positionEstimatedEcef() };
 
     if (!initial_position_set_) {
-      ROS_INFO_NAMED("vectornav", "Set initial position to %f %f %f", pos[0], pos[1], pos[2]);
+      RCLCPP_INFO(get_logger(), "Set initial position to %f %f %f", pos[0], pos[1], pos[2]);
       initial_position_set_ = true;
       initial_position_.x = pos[0];
       initial_position_.y = pos[1];
@@ -986,7 +985,7 @@ bool Vectornav::fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::Odometr
   return true;
 }
 
-bool Vectornav::fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::Ins & ins_msg, const ros::Time & ros_time)
+bool Vectornav::fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::msg::Ins & ins_msg, const rclcpp::Time & ros_time)
 {
   // Check with vectornav different of VN-100
   ins_msg.header.stamp = ros_time;
@@ -994,7 +993,7 @@ bool Vectornav::fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::Ins & i
 
   if (cd.hasInsStatus()) {
     auto const insStatus { cd.insStatus() };
-    ins_msg.insStatus = static_cast<uint16_t>(insStatus);
+    ins_msg.ins_status = static_cast<uint16_t>(insStatus);
   }
 
   if (cd.hasTow()) {
@@ -1009,7 +1008,7 @@ bool Vectornav::fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::Ins & i
     auto const utcTime { cd.timeUtc() };
     char const * utcTimeBytes = reinterpret_cast<char const *>(&utcTime);
     //ins_msg.utcTime bytes are in Little Endian Byte Order
-    std::memcpy(&ins_msg.utcTime, utcTimeBytes, 8);
+    std::memcpy(&ins_msg.utc_time, utcTimeBytes, 8);
   }
 
   if (cd.hasYawPitchRoll()) {
@@ -1028,24 +1027,26 @@ bool Vectornav::fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::Ins & i
 
   if (cd.hasVelocityEstimatedNed()) {
     vn::math::vec3f const nedVel { cd.velocityEstimatedNed() };
-    ins_msg.nedVelX = nedVel[0];
-    ins_msg.nedVelY = nedVel[1];
-    ins_msg.nedVelZ = nedVel[2];
+    ins_msg.ned_vel_x = nedVel[0];
+    ins_msg.ned_vel_y = nedVel[1];
+    ins_msg.ned_vel_z = nedVel[2];
   }
 
   if (cd.hasAttitudeUncertainty()) {
     vn::math::vec3f const attUncertainty { cd.attitudeUncertainty() };
-    ins_msg.attUncertainty[0] = attUncertainty[0];
-    ins_msg.attUncertainty[1] = attUncertainty[1];
-    ins_msg.attUncertainty[2] = attUncertainty[2];
+    ins_msg.att_uncertainty[0] = attUncertainty[0];
+    ins_msg.att_uncertainty[1] = attUncertainty[1];
+    ins_msg.att_uncertainty[2] = attUncertainty[2];
   }
 
   if (cd.hasPositionUncertaintyEstimated()) {
-    ins_msg.posUncertainty = cd.positionUncertaintyEstimated();
+    ins_msg.pos_uncertainty = cd.positionUncertaintyEstimated();
   }
 
   if (cd.hasVelocityUncertaintyEstimated()) {
-    ins_msg.velUncertainty = cd.velocityUncertaintyEstimated();
-  }}
+    ins_msg.vel_uncertainty = cd.velocityUncertaintyEstimated();
+  }
+  return true;
+}
 
 }  // namespace vectornav

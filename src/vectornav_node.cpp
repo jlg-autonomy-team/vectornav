@@ -1,11 +1,10 @@
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <vectornav/vectornav.hpp>
 
 int main(int argc, char ** argv)
 {
-  ros::init(argc, argv, "vectornav_node");
-  ros::NodeHandle nh, pnh{"~"};
-  vectornav::Vectornav vectornav(nh, pnh);
-  vectornav.spin();
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<vectornav::Vectornav>();
+  rclcpp::spin(node);
   return 0;
 }

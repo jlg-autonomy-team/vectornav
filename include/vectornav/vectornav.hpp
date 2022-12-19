@@ -30,33 +30,30 @@
 #include <vn/sensors.h>
 #include <vn/compositedata.h>
 
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/MagneticField.h>
-#include <sensor_msgs/NavSatFix.h>
-#include <sensor_msgs/Temperature.h>
-#include <sensor_msgs/FluidPressure.h>
-#include <nav_msgs/Odometry.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <vectornav/Ins.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/magnetic_field.hpp>
+#include <sensor_msgs/msg/nav_sat_fix.hpp>
+#include <sensor_msgs/msg/temperature.hpp>
+#include <sensor_msgs/msg/fluid_pressure.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <vectornav/msg/ins.hpp>
 
-#include <std_srvs/Empty.h>
-#include <vectornav/SetFrameHorizontal.h>
+#include <std_srvs/srv/empty.hpp>
+#include <vectornav/srv/set_frame_horizontal.hpp>
 
 #include <mutex>
 
 namespace vectornav
 {
 
-struct Vectornav
+struct Vectornav : public rclcpp::Node
 {
-  explicit Vectornav(ros::NodeHandle & nh, ros::NodeHandle & pnh);
-  void spin();
+  explicit Vectornav();
+  ~Vectornav();
 
 private:
-  ros::NodeHandle nh_;
-  ros::NodeHandle pnh_;
-
   params params_{};
   bool has_rotation_reference_frame_ { false };
   
@@ -71,44 +68,56 @@ private:
   double last_sensor_time_    { 0. };
   double maximum_imu_timestamp_difference_ { 0. };
   double average_time_difference_{ 0. };
-  ros::Time ros_start_time_      { };
-  ros::Time newest_timestamp_    { };
-  bool adjust_ros_timestamp_     { false };
+  rclcpp::Time ros_start_time_   { 0 };
+  rclcpp::Time newest_timestamp_ { 0 };
   int invalid_data_        { 0 };
   int max_invalid_packets_ { -1 };
   bool initial_position_set_  { false };
   vn::math::vec3d initial_position_ { };
 
-  ros::Publisher pub_imu_, pub_mag_, pub_gps_, pub_odom_, pub_temp_, pub_pres_, pub_ins_;
-  ros::ServiceServer srv_set_horizontal_, srv_reset_odom_;
+  // Publishers
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_imu_{ nullptr };
+  rclcpp::Publisher<sensor_msgs::msg::MagneticField>::SharedPtr pub_mag_{ nullptr };
+  rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr pub_gps_{ nullptr };
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_{ nullptr };
+  rclcpp::Publisher<sensor_msgs::msg::Temperature>::SharedPtr pub_temp_{ nullptr };
+  rclcpp::Publisher<sensor_msgs::msg::FluidPressure>::SharedPtr pub_pres_{ nullptr };
+  rclcpp::Publisher<vectornav::msg::Ins>::SharedPtr pub_ins_{ nullptr };
+
+  // Services
+  rclcpp::Service<vectornav::srv::SetFrameHorizontal>::SharedPtr srv_set_acc_bias_{ nullptr };
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr srv_reset_odom_{ nullptr };
 
   void read_parameters();
   void advertise_topics();
   void advertise_services();
 
   void connect_device(std::string const & port, int baudrate);
-  void disconnect_device();
   void configure_device();
 
   std::mutex mtx_samples_;
   struct sample_t {double x, y, z;};
   bool take_samples_{false};
   std::vector<sample_t> samples_{}; 
-  bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectornav::SetFrameHorizontal::Response & res);
-  bool reset_odometry(std_srvs::Empty::Request const & req, std_srvs::Empty::Response & res);
+  void set_acc_bias(
+    const std::shared_ptr<vectornav::srv::SetFrameHorizontal::Request> req,
+    std::shared_ptr<vectornav::srv::SetFrameHorizontal::Response> resp);
+  void reset_odometry(
+    const std::shared_ptr<std_srvs::srv::Empty::Request> req,
+    std::shared_ptr<std_srvs::srv::Empty::Response> resp);
   
   static void binary_async_message_received(void* ,vn::protocol::uart::Packet & p, size_t index);
   void binary_async_message_received_(vn::protocol::uart::Packet & p, size_t index);
   std::uint64_t pkg_count_ { 0U };
-  ros::Time get_timestamp(vn::sensors::CompositeData & cd, const ros::Time & ros_time);
+  rclcpp::Time get_timestamp(vn::sensors::CompositeData & cd, const rclcpp::Time & ros_time);
   bool validate_timestamp(double const sensor_time);
-  bool fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::Imu & imu_msg, const ros::Time & ros_time);
-  bool fill_mag_msg(vn::sensors::CompositeData & cd, sensor_msgs::MagneticField & mag_msg, const ros::Time & ros_time);
-  bool fill_temp_msg(vn::sensors::CompositeData & cd, sensor_msgs::Temperature & temp_msg, const ros::Time & ros_time);
-  bool fill_pres_msg(vn::sensors::CompositeData & cd, sensor_msgs::FluidPressure & pres_msg, const ros::Time & ros_time);
-  bool fill_gps_msg(vn::sensors::CompositeData & cd, sensor_msgs::NavSatFix & gps_msg, const ros::Time & ros_time);
-  bool fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::Odometry & odom_msg, const ros::Time & ros_time);
-  bool fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::Ins & ins_msg, const ros::Time & ros_time);
+  bool fill_imu_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::Imu & imu_msg, const rclcpp::Time & ros_time);
+  bool fill_mag_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::MagneticField & mag_msg, const rclcpp::Time & ros_time);
+  bool fill_temp_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::Temperature & temp_msg, const rclcpp::Time & ros_time);
+  bool fill_pres_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::FluidPressure & pres_msg, const rclcpp::Time & ros_time);
+  bool fill_gps_msg(vn::sensors::CompositeData & cd, sensor_msgs::msg::NavSatFix & gps_msg, const rclcpp::Time & ros_time);
+  bool fill_odom_msg(vn::sensors::CompositeData & cd, nav_msgs::msg::Odometry & odom_msg, const rclcpp::Time & ros_time);
+  bool fill_ins_msg(vn::sensors::CompositeData & cd, vectornav::msg::Ins & ins_msg, const rclcpp::Time & ros_time);
 };
 
 } // namespace vectornav

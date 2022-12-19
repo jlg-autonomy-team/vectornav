@@ -24,6 +24,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   ADD_LINTER_TESTS
 )
 ament_export_dependencies(rosidl_default_runtime)
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 #include(vnproglib-1.1/cpp/CMakeLists.txt)
 add_subdirectory(vnproglib-1.2.0.0/cpp)
@@ -39,22 +41,30 @@ ament_target_dependencies(vnpub
   nav_msgs
   sensor_msgs
   std_srvs)
-rosidl_get_typesupport_target(cpp_typesupport_target
-  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(vnpub
   libvncxx
-  ${cpp_typesupport_target}
-)
+  ${cpp_typesupport_target})
 
-#add_executable(vectornav_node src/vectornav_node.cpp src/vectornav.cpp)
-#target_link_libraries(vectornav_node
-#  libvncxx
-#  ${catkin_LIBRARIES})
+add_executable(vectornav_node src/vectornav_node.cpp src/vectornav.cpp)
+target_include_directories(vectornav_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(vectornav_node
+  rclcpp
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_srvs)
+target_link_libraries(vectornav_node
+  libvncxx
+  ${cpp_typesupport_target})
 
 
 ## Mark executables and/or libraries for installation
 install(TARGETS
-  vnpub #vectornav_node
+  vnpub vectornav_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
