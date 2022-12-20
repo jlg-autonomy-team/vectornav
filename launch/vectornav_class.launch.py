@@ -134,7 +134,7 @@ def generate_launch_description():
 
     ld.add_action(launch_ros.actions.Node(
         package='vectornav',
-        executable='vectornav_node',
+        executable='vectornav_lifecycle_node',
         name='imu',
         namespace=params['namespace'],
         parameters=[{

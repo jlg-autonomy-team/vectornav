@@ -10,6 +10,7 @@ project(vectornav)
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -61,10 +62,27 @@ target_link_libraries(vectornav_node
   libvncxx
   ${cpp_typesupport_target})
 
+add_executable(vectornav_lifecycle_node src/vectornav_lifecycle_node.cpp src/vectornav_lifecycle.cpp)
+target_include_directories(vectornav_lifecycle_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(vectornav_lifecycle_node
+  rclcpp
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_srvs
+  rclcpp_lifecycle)
+target_link_libraries(vectornav_lifecycle_node
+  libvncxx
+  ${cpp_typesupport_target})
+
 
 ## Mark executables and/or libraries for installation
 install(TARGETS
-  vnpub vectornav_node
+  vnpub vectornav_node vectornav_lifecycle_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
