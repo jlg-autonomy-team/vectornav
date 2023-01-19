@@ -10,6 +10,8 @@ project(vectornav)
 find_package(catkin REQUIRED COMPONENTS
     roscpp
     message_generation
+    std_msgs
+    geometry_msgs
 )
 
 add_message_files(
@@ -17,9 +19,15 @@ add_message_files(
     Ins.msg
 )
 
+add_service_files(
+    FILES
+    SetFrameHorizontal.srv
+)
+
 generate_messages(
     DEPENDENCIES
     std_msgs
+    geometry_msgs
 )
 
 ###################################
@@ -28,7 +36,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES vectornav
-   CATKIN_DEPENDS roscpp sensor_msgs
+   CATKIN_DEPENDS roscpp sensor_msgs geometry_msgs
 #  DEPENDS system_lib
 )
 
@@ -41,7 +49,10 @@ add_subdirectory(vnproglib-1.2.0.0/cpp)
 
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
-include_directories(vnproglib-1.2.0.0/cpp/include ${catkin_INCLUDE_DIRS})
+include_directories(
+  include
+  vnproglib-1.2.0.0/cpp/include 
+  ${catkin_INCLUDE_DIRS})
 
 ## Declare a cpp library
 ## Declare a cpp executable
@@ -54,8 +65,19 @@ target_link_libraries(vnpub
   ${catkin_LIBRARIES}
 )
 
+add_executable(vectornav_node src/vectornav_node.cpp src/vectornav.cpp)
+add_dependencies(vectornav_node ${PROJECT_NAME}_generate_messages)
+target_link_libraries(vectornav_node
+  libvncxx
+  ${catkin_LIBRARIES})
+
 ## Mark executables and/or libraries for installation
 install(TARGETS vnpub
+   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+install(TARGETS vectornav_node
    ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
