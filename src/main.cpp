@@ -163,7 +163,7 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
   vn::math::mat3f const gain {1., 0., 0.,
                               0., 1., 0.,
                               0., 0., 1.};
-  
+
   if (req.reset) {
     vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
     vs_ptr->writeSettings(true);
@@ -184,7 +184,7 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
   sample_lock.lock();
     auto const end = ros::Time::now();
     take_samples = false;
-    
+
     res.samples_taken = samples.size();
     res.elapsed_time = (end - start).toSec();
 
@@ -207,8 +207,8 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
 
   auto const curr { vs_ptr->readAccelerationCompensation() };
 
-  vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
-                              curr.b.y-static_cast<float>(bias_y), 
+  vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x),
+                              curr.b.y-static_cast<float>(bias_y),
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
 
   res.bias_x = static_cast<double>(curr.b.x) - bias_x;
@@ -218,7 +218,7 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
   res.covariance_x = covariance_x;
   res.covariance_y = covariance_y;
   res.covariance_z = covariance_z;
-  
+
   if (samples.size() < 10) {
     ROS_ERROR("Not enough samples taken. Aborting.");
     res.success = false;
@@ -301,7 +301,7 @@ int main(int argc, char * argv[])
   pn.param<std::string>("frame_id", user_data.frame_id, "vectornav");
   pn.param<bool>("tf_ned_to_enu", user_data.tf_ned_to_enu, false);
   pn.param<bool>("frame_based_enu", user_data.frame_based_enu, false);
-  pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, false);
+  pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, true);
   pn.param<bool>("frame_based_nwu", user_data.frame_based_nwu, false);
   pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
   pn.param<int>("async_output_rate", async_output_rate, 40);
@@ -494,7 +494,7 @@ int main(int argc, char * argv[])
 
   // Register async callback function
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
-  
+
   // Write bias compensation
   setHorizontalSrv = pn.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
     "set_acc_bias", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
@@ -582,18 +582,18 @@ bool fill_imu_message(
           msgIMU.linear_acceleration.z = al[2];
         } else {
           // put into ENU - swap X/Y, invert Z
-          quat_msg.x = q[1];
-          quat_msg.y = q[0];
+          quat_msg.x = -q[1];
+          quat_msg.y = -q[0];
           quat_msg.z = -q[2];
           quat_msg.w = q[3];
 
           // Flip x and y then invert z
-          msgIMU.angular_velocity.x = ar[1];
-          msgIMU.angular_velocity.y = ar[0];
+          msgIMU.angular_velocity.x = -ar[1];
+          msgIMU.angular_velocity.y = -ar[0];
           msgIMU.angular_velocity.z = -ar[2];
           // Flip x and y then invert z
-          msgIMU.linear_acceleration.x = al[1];
-          msgIMU.linear_acceleration.y = al[0];
+          msgIMU.linear_acceleration.x = -al[1];
+          msgIMU.linear_acceleration.y = -al[0];
           msgIMU.linear_acceleration.z = -al[2];
 
           if (cd.hasAttitudeUncertainty()) {
@@ -631,18 +631,18 @@ bool fill_imu_message(
           msgIMU.linear_acceleration.z = al[2];
         } else {
           // put into NWU
-          quat_msg.x = q[0];
-          quat_msg.y = -q[1];
+          quat_msg.x = -q[0];
+          quat_msg.y = q[1];
           quat_msg.z = -q[2];
           quat_msg.w = q[3];
 
           // Invert y and z
-          msgIMU.angular_velocity.x = ar[0];
-          msgIMU.angular_velocity.y = -ar[1];
+          msgIMU.angular_velocity.x = -ar[0];
+          msgIMU.angular_velocity.y = ar[1];
           msgIMU.angular_velocity.z = -ar[2];
           // Invert y and z
-          msgIMU.linear_acceleration.x = al[0];
-          msgIMU.linear_acceleration.y = -al[1];
+          msgIMU.linear_acceleration.x = -al[0];
+          msgIMU.linear_acceleration.y = al[1];
           msgIMU.linear_acceleration.z = -al[2];
 
           if (cd.hasAttitudeUncertainty()) {
@@ -790,8 +790,8 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // alternative method for conversion to ENU frame (leads to another result)
       // put into ENU - swap X/Y, invert Z
-      msgOdom.pose.pose.orientation.x = q[1];
-      msgOdom.pose.pose.orientation.y = q[0];
+      msgOdom.pose.pose.orientation.x = -q[1];
+      msgOdom.pose.pose.orientation.y = -q[0];
       msgOdom.pose.pose.orientation.z = -q[2];
       msgOdom.pose.pose.orientation.w = q[3];
     } else if (user_data->tf_ned_to_nwu && user_data->frame_based_nwu) {
@@ -806,8 +806,8 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // alternative method for conversion to ENU frame (leads to another result)
       // put into ENU - swap X/Y, invert Z
-      msgOdom.pose.pose.orientation.x = q[0];
-      msgOdom.pose.pose.orientation.y = -q[1];
+      msgOdom.pose.pose.orientation.x = -q[0];
+      msgOdom.pose.pose.orientation.y = q[1];
       msgOdom.pose.pose.orientation.z = -q[2];
       msgOdom.pose.pose.orientation.w = q[3];
     }
@@ -843,14 +843,14 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // value assignment for conversion by swapping and inverting (not frame_based_enu)
       // Flip x and y then invert z
-      msgOdom.twist.twist.linear.x = vel[1];
-      msgOdom.twist.twist.linear.y = vel[0];
+      msgOdom.twist.twist.linear.x = -vel[1];
+      msgOdom.twist.twist.linear.y = -vel[0];
       msgOdom.twist.twist.linear.z = -vel[2];
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // value assignment for conversion by swapping and inverting (not frame_based_nwu)
       // Invert y and z
-      msgOdom.twist.twist.linear.x = vel[0];
-      msgOdom.twist.twist.linear.y = -vel[1];
+      msgOdom.twist.twist.linear.x = -vel[0];
+      msgOdom.twist.twist.linear.y = vel[1];
       msgOdom.twist.twist.linear.z = -vel[2];
     }
 
@@ -884,14 +884,14 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // value assignment for conversion by swapping and inverting (not frame_based_enu)
       // Flip x and y then invert z
-      msgOdom.twist.twist.angular.x = ar[1];
-      msgOdom.twist.twist.angular.y = ar[0];
+      msgOdom.twist.twist.angular.x = -ar[1];
+      msgOdom.twist.twist.angular.y = -ar[0];
       msgOdom.twist.twist.angular.z = -ar[2];
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // value assignment for conversion by swapping and inverting (not frame_based_nwu)
       // Invert y and z
-      msgOdom.twist.twist.angular.x = ar[0];
-      msgOdom.twist.twist.angular.y = -ar[1];
+      msgOdom.twist.twist.angular.x = -ar[0];
+      msgOdom.twist.twist.angular.y = ar[1];
       msgOdom.twist.twist.angular.z = -ar[2];
     }
 
@@ -1077,7 +1077,7 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
       }
     }
     lock.unlock();
-    
+
     if ((pkg_count % user_data->output_stride) == 0) {
       // Magnetic Field
       if (pubMag.getNumSubscribers() > 0) {
