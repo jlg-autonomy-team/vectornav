@@ -1,72 +1,93 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.5)
 # Compile options so compiles with ROS Kinetic
 # Future releases may want to
-add_compile_options(-std=c++11)
+add_compile_options(-std=c++17)
 project(vectornav)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS
-    roscpp
-    message_generation
-)
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
-add_message_files(
-    FILES
-    Ins.msg
+# Declare ROS2 messages and services
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Ins.msg"
+  "srv/SetFrameHorizontal.srv"
+  DEPENDENCIES std_msgs geometry_msgs
+  ADD_LINTER_TESTS
 )
-
-generate_messages(
-    DEPENDENCIES
-    std_msgs
-)
-
-###################################
-## catkin specific configuration ##
-###################################
-catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES vectornav
-   CATKIN_DEPENDS roscpp sensor_msgs
-#  DEPENDS system_lib
-)
-
-###########
-## Build ##
-###########
+ament_export_dependencies(rosidl_default_runtime)
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 #include(vnproglib-1.1/cpp/CMakeLists.txt)
 add_subdirectory(vnproglib-1.2.0.0/cpp)
 
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-include_directories(vnproglib-1.2.0.0/cpp/include ${catkin_INCLUDE_DIRS})
-
 ## Declare a cpp library
 ## Declare a cpp executable
 add_executable(vnpub src/main.cpp)
-add_dependencies(vnpub ${PROJECT_NAME}_generate_messages)
-
-## Specify libraries to link a library or executable target against
+ament_target_dependencies(vnpub
+  rclcpp
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_srvs)
 target_link_libraries(vnpub
   libvncxx
-  ${catkin_LIBRARIES}
-)
+  ${cpp_typesupport_target})
+
+add_executable(vectornav_node src/vectornav_node.cpp src/vectornav.cpp)
+target_include_directories(vectornav_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(vectornav_node
+  rclcpp
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_srvs)
+target_link_libraries(vectornav_node
+  libvncxx
+  ${cpp_typesupport_target})
+
+add_executable(vectornav_lifecycle_node src/vectornav_lifecycle_node.cpp src/vectornav_lifecycle.cpp)
+target_include_directories(vectornav_lifecycle_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+ament_target_dependencies(vectornav_lifecycle_node
+  rclcpp
+  geometry_msgs
+  tf2
+  tf2_geometry_msgs
+  nav_msgs
+  sensor_msgs
+  std_srvs
+  rclcpp_lifecycle)
+target_link_libraries(vectornav_lifecycle_node
+  libvncxx
+  ${cpp_typesupport_target})
+
 
 ## Mark executables and/or libraries for installation
-install(TARGETS vnpub
-   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+install(TARGETS
+  vnpub vectornav_node vectornav_lifecycle_node
+  DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY
+  config launch
+  DESTINATION share/${PROJECT_NAME}/
 )
 
-install(DIRECTORY launch/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
-  FILES_MATCHING PATTERN "*.launch"
-)
-
-install(DIRECTORY config/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
-  FILES_MATCHING PATTERN "*.yaml"
-)
+ament_package()
