@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  base:
+    image: europe-west1-docker.pkg.dev/robotnik-5830-dev/internal/robotnik-ros:builder-humble-0.9.3
+    volumes:
+      - type: bind
+        source: ./postcreate.sh
+        target: /home/robot/postcreate.sh
+        read_only: true
+      - type: bind
+        source: ../
+        target: /home/robot/robot_ws/src/vectornav
+    environment:
+      CC: /usr/bin/gcc
+      CXX: /usr/bin/g++
+    privileged: true
+    command: sleep infinity
+    network_mode: host

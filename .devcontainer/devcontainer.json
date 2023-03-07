@@ -1,24 +1,30 @@
 {
-  "image": "robotnik/robotnik-ros:builder-humble-devel-merge",
-  "runArgs": [
-    "--privileged",
-    "--net=host",
-    "--rm",
-    "--device=/dev/ttyUSB0"
-  ],
-
-  "workspaceFolder": "/home/ros/robot_ws",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/home/ros/robot_ws/src/vectornav,type=bind,consistency=cached",
-
-  "extensions": [
-    "ms-vscode.cpptools",
-    "ms-python.python",
-    "GitHub.copilot",
-    "PKief.material-icon-theme",
-    "redhat.vscode-xml",
-    "redhat.vscode-yaml"
-  ],
-
-  "remoteUser": "ros",
-  "postCreateCommand": "/home/ros/robot_ws/src/vectornav/.devcontainer/postcreate.sh"
+  "name": "Robotnik",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "base",
+  "workspaceFolder": "/home/robot/robot_ws",
+  "remoteUser": "robot",
+  "postCreateCommand": "/home/robot/postcreate.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "GitHub.copilot",
+        "redhat.vscode-xml",
+        "ms-python.python",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+        "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+        "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+        "C_Cpp.default.cStandard": "c17",
+        "C_Cpp.default.cppStandard": "c++20",
+        "C_Cpp.default.includePath": [
+          "/opt/ros/humble/include/**",
+          "${workspaceFolder}/**"
+        ]
+      }
+    }
+  }
 }
