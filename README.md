@@ -1,87 +1,60 @@
-Vectornav ROS Driver
-====================
+# Vectornav ROS Driver
 
-A ROS node for `VectorNav` INS & GPS devices.
+This repository contains the ROS packages for the Vectornav INS & GPS devices.
 
-This package provides a sensor_msg interface for the VN100, 200, & 300 
-devices. Simply configure your launch files to point to the serial port
-of the deice and you can use rostopic to quickly get running.   
+> **_NOTE:_**  Currently only Vectornav VN100 with version `2.1.0` and `3.0.0` has been tested. Please open an issue if you need support for other versions.
 
-Check out the ROS2 branch for ROS2 Support!
+## Usage
 
+### Parameters
 
-QuickStart Guide
-----------------
+The following parameters for `vnpub` node:
 
-This assumes that you have a VectorNav device connected to your computer 
-via a USB cable and that you have already created a `[catkin workspace]`[2]
-
-Build:
-
-```bash
-$ cd ~/catkin_ws/src
-$ git clone https://github.com/dawonn/vectornav.git
-$ cd ..
-$ catkin_make
-```
-
-Run:
-
-```bash
-(Terminal 1) $ roscore
-(Terminal 2) $ roslaunch vectornav vectornav.launch
-(Terminal 3) $ rostopic list
-(Terminal 3) $ rostopic echo /vectornav/IMU
-(Terminal #) $ ctrl+c to quit
-```
+Required:
+* `~serial_port` (`string`, required): The device name of the Vectornav device. For example, `/dev/ttyUSB_IMU`.
+* `~serial_baud` (`int`, required): The baudrate of the Vectornav device. For example, `115200`.
+* `~frame_id` (`string`, required): The frame id of the Vectornav device. For example, `robot_imu_link`.
 
 
-Overview 
---------
+Optional:
+* `~acc_bias_enable` (`bool`, default: `false`): Enable service to calibrate accelerometer bias.
+* `~set_acc_bias_seconds` (`double`, default: `2.5`): Time in seconds to take samples for accelerometer bias calibration.
+* `~async_output_rate` (`int`, default: `200`): The rate of the async output. For example, `200`.
+* `~fixed_imu_rate` (`int`, default: `800`): The fixed rate of the IMU data. For example, `800`.
+* `~adjust_ros_timestamp` (`bool`, default: `true`): Use sensor timestamp instead of ROS timestamp to mitigate USB communication issues.
+* `~map_frame_id` (`string`, default: `map`): The map frame id of the Vectornav device. For example, `map`.
 
-#### vnpub node
+* `~linear_accel_covariance` (`double[9]`, default: `[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01]`): The covariance of the linear acceleration.
+* `~angular_vel_covariance` (`double[9]`, default: `[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01]`): The covariance of the angular velocity.
+* `~orientation_covariance` (`double[9]`, default: `[0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01]`): The covariance of the orientation.
 
-This node provides a ROS interface for a vectornav device. It can be configured
-via ROS parameters and publishes sensor data via ROS topics.
+* `~rotation_reference_frame` (`double[9]`, default: `[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0, 0, 1.0]`): The rotation reference frame of the Vectornav device. For example, `[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0, 0, 1.0]` for NED frame.
 
+### Topics
 
-#### vectornav.launch
+The following topics are published by the `vnpub` node:
+* `~data` (`sensor_msgs/Imu`): The IMU data with standard ROS messages.
+* `~mag` (`sensor_msgs/MagneticField`): The magnetic field data with standard ROS messages.
+* `~gps` (`sensor_msgs/NavSatFix`): The GPS data with standard ROS messages.
+* `~odom` (`nav_msgs/Odometry`): The odometry data with standard ROS messages.
+* `~temperature` (`sensor_msgs/Temperature`): The temperature data with standard ROS messages.
+* `~atm_pressure` (`sensor_msgs/FluidPressure`): The atmospheric pressure data with standard ROS messages.
+* `~ins_status` (`vectornav_msgs/InsStatus`): The INS status data with custom ROS messages.
 
-This launch file contains the default parameters for connecting a device to ROS.
-You will problaby want to copy it into your own project and modify as required. 
+### Services
 
+The following services are provided by the `vnpub` node:
+* `~set_acc_bias` (`vectornav_msgs/SetAccBias`): Set the accelerometer bias to `[0.0, 0.0, 9.81]` with mean of samples taken during `set_acc_bias_seconds` seconds.
+* `~reset_acc_bias` (`std_srvs/Empty`): Reset the accelerometer bias to zero.
 
-References 
-----------
+> **_NOTE:_** The services are only available if `acc_bias_enable` is set to `true`.
 
-```
-[1]: http://www.vectornav.com/ "VectorNav"
-[2]: http://wiki.ros.org/ROS/Tutorials/InstallingandConfiguringROSEnvironment "ROS Workspace Tutorial"
-```
+## Code of Conduct
+This project has adopted the [Robotnik Code of Conduct](https://to.do/code_of_conduct_faq). For more information see the [Code of Conduct FAQ](https://to.do/code_of_conduct_faq) or contact [opencode@robotnik.es](opencode@robotnik.es) with any additional questions or comments.
 
-The MIT License (MIT)
-----------------------
-```
+## License
+Copyright (c) 2023, Robotnik Automation S.L.L. All rights reserved.
 
-Copyright (c) 2018 Dereck Wonnacott <dereck@gmail.com>
+Licensed under the [BSD 2-Clause](./LICENSE) License.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-```
-
+[//]: # (Links)
