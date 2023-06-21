@@ -53,8 +53,11 @@ The following services are provided by the `vnpub` node:
 This project has adopted the [Robotnik Code of Conduct](https://to.do/code_of_conduct_faq). For more information see the [Code of Conduct FAQ](https://to.do/code_of_conduct_faq) or contact [opencode@robotnik.es](opencode@robotnik.es) with any additional questions or comments.
 
 ## License
-Copyright (c) 2023, Robotnik Automation S.L.L. All rights reserved.
+Copyright (c) 2023, Robotnik Automation S.L. All rights reserved.
 
-Licensed under the [BSD 2-Clause](./LICENSE) License.
+The original code under MIT License can be found on this [repository](https://github.com/dawonn/vectornav).
+This repository has been partitioned from another project, originally licensed under the MIT License. However, the current project is licensed under the BSD 2-Clause License.
+
+The original code can be found [here](https://github.com/dawonn/vectornav).
 
 [//]: # (Links)
