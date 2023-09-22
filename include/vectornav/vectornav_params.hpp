@@ -52,6 +52,9 @@ struct params
   int fixed_imu_rate         { 800 };
   int max_invalid_packets    { 500 };
 
+  bool acc_bias_enable       { false };
+  double set_acc_bias_seconds{ 2.5 };
+
   std::vector<double> linear_accel_covariance{0.01, 0.00, 0.00,
                                               0.00, 0.01, 0.00,
                                               0.00, 0.00, 0.01};
@@ -64,6 +67,7 @@ struct params
                                              0.00, 0.01, 0.00,
                                              0.00, 0.00, 0.01};
 
+  bool has_rotation_reference_frame { true };
   std::vector<double> rotation_reference_frame{1., 0., 0.,
                                                0., 1., 0.,
                                                0., 0., 1.};

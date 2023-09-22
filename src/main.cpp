@@ -107,6 +107,8 @@ struct UserData
   // Initial position after getting a GPS fix.
   vec3d initial_position;
   bool initial_position_set = false;
+  bool acc_bias_enable;
+  double set_acc_bias_seconds;
 
   //Unused covariances initialized to zero's
   std::vector<double> linear_accel_covariance = {};
@@ -296,6 +298,8 @@ int main(int argc, char * argv[])
   node->declare_parameter<int>("serial_baud", 921600);
   node->declare_parameter<int>("fixed_imu_rate", 800);
   node->declare_parameter<int>("max_invalid_packets", 500);
+  node->declare_parameter<bool>("acc_bias_enable", false);
+  node->declare_parameter<double>("set_acc_bias_seconds", 2.5);
 
   node->declare_parameter<std::vector<double>>("linear_accel_covariance", {0.0003, 0, 0, 0, 0.0003, 0, 0, 0, 0.0003});
   node->declare_parameter<std::vector<double>>("angular_vel_covariance", {0.02, 0, 0, 0, 0.02, 0, 0, 0, 0.02});
@@ -315,6 +319,8 @@ int main(int argc, char * argv[])
   node->get_parameter<int>("serial_baud", SensorBaudrate);
   node->get_parameter<int>("fixed_imu_rate", SensorImuRate);
   node->get_parameter<int>("max_invalid_packets", max_invalid_packets);
+  node->get_parameter<bool>("acc_bias_enable", user_data.acc_bias_enable);
+  node->get_parameter<double>("set_acc_bias_seconds", user_data.set_acc_bias_seconds);
 
   node->get_parameter("linear_accel_covariance", user_data.linear_accel_covariance);
   node->get_parameter("angular_vel_covariance", user_data.angular_vel_covariance);

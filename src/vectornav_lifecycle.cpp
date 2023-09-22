@@ -67,10 +67,13 @@ VectornavLifecycleNode::VectornavLifecycleNode()
   declare_parameter<int>("serial_baud", params_.baudrate);
   declare_parameter<int>("fixed_imu_rate", params_.fixed_imu_rate);
   declare_parameter<int>("max_invalid_packets", params_.max_invalid_packets);
+  declare_parameter<bool>("acc_bias_enable", params_.acc_bias_enable);
+  declare_parameter<double>("set_acc_bias_seconds", params_.set_acc_bias_seconds);
 
   declare_parameter<std::vector<double>>("linear_accel_covariance", params_.linear_accel_covariance);
   declare_parameter<std::vector<double>>("angular_vel_covariance", params_.angular_vel_covariance);
   declare_parameter<std::vector<double>>("orientation_covariance", params_.orientation_covariance);
+  declare_parameter<bool>("has_rotation_reference_frame", params_.has_rotation_reference_frame);
   declare_parameter<std::vector<double>>("rotation_reference_frame", params_.rotation_reference_frame);
 }
 
@@ -106,10 +109,13 @@ void VectornavLifecycleNode::read_parameters()
   get_parameter("serial_baud", params_.baudrate);
   get_parameter("fixed_imu_rate", params_.fixed_imu_rate);
   get_parameter("max_invalid_packets", params_.max_invalid_packets);
+  get_parameter("acc_bias_enable", params_.acc_bias_enable);
+  get_parameter("set_acc_bias_seconds", params_.set_acc_bias_seconds);
 
   get_parameter("linear_accel_covariance", params_.linear_accel_covariance);
   get_parameter("angular_vel_covariance", params_.angular_vel_covariance);
   get_parameter("orientation_covariance", params_.orientation_covariance); // Is it used?
+  get_parameter("has_rotation_reference_frame", params_.has_rotation_reference_frame);
   get_parameter("rotation_reference_frame", params_.rotation_reference_frame);
 }
 
