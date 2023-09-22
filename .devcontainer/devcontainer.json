@@ -1,10 +1,10 @@
 {
-  "name": "Robotnik",
-  "dockerComposeFile": "docker-compose.yml",
-  "service": "base",
+  "name": "Robotnik: Vectonav",
+  "dockerComposeFile": "docker-compose.yaml",
+  "service": "workspace",
   "workspaceFolder": "/home/robot/robot_ws",
-  "remoteUser": "robot",
   "postCreateCommand": "/home/robot/postcreate.sh",
+  "shutdownAction": "stopCompose",
   "customizations": {
     "vscode": {
       "extensions": [
