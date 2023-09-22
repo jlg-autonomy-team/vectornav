@@ -20,7 +20,6 @@ find_package(std_srvs REQUIRED)
 # Declare ROS2 messages and services
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Ins.msg"
-  "srv/SetFrameHorizontal.srv"
   DEPENDENCIES std_msgs geometry_msgs
   ADD_LINTER_TESTS
 )
