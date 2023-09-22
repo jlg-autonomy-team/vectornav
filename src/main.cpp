@@ -40,7 +40,7 @@
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <sensor_msgs/msg/temperature.hpp>
 #include <std_srvs/srv/empty.hpp>
-#include <vectornav/srv/set_frame_horizontal.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -57,7 +57,7 @@ rclcpp::Publisher<sensor_msgs::msg::FluidPressure>::SharedPtr pubPres;
 rclcpp::Publisher<vectornav::msg::Ins>::SharedPtr pubIns;
 
 rclcpp::Service<std_srvs::srv::Empty>::SharedPtr resetOdomSrv;
-rclcpp::Service<vectornav::srv::SetFrameHorizontal>::SharedPtr setHorizontalSrv;
+rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr setHorizontalSrv, resetHorizontalSrv;
 
 //XmlRpc::XmlRpcValue rpc_temp;
 
@@ -145,40 +145,48 @@ void resetOdom(
   user_data->initial_position_set = false;
 }
 
-// Calibrate bias of accelerometer.
-void set_horizontal(
-  const std::shared_ptr<vectornav::srv::SetFrameHorizontal::Request> req,
-  std::shared_ptr<vectornav::srv::SetFrameHorizontal::Response> resp, VnSensor* vs_ptr, int *SensorImuRate)
+std::mutex service_acc_bias_mtx;
+
+void reset_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp, VnSensor* vs_ptr)
 {
-  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
-  RCLCPP_INFO(node->get_logger(),  "Set horizontal callback received. Setting horizontal frame.");
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  RCLCPP_INFO(node->get_logger(), "Reset to factory new acceleration bias");
+
   vn::math::mat3f const gain {1., 0., 0.,
                               0., 1., 0.,
                               0., 0., 1.};
+  vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
+  vs_ptr->writeSettings(true);
   
-  if (req->reset) {
-    vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
-    vs_ptr->writeSettings(true);
+  resp->success = true;
+  resp->message = "Bias register set to zero. Please, reset vectornav hardware to avoid angular velocity.";
+  RCLCPP_INFO(node->get_logger(), "Done.");
+}
 
-    resp->success = true;
-    return;
-  }
+// Calibrate bias of accelerometer.
+void set_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp, VnSensor* vs_ptr, int *SensorImuRate, double* set_acc_bias_seconds)
+{
+  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  RCLCPP_INFO(node->get_logger(), "Set acceleration bias to zero (0.0, 0.0, 9.81)");
+  vn::math::mat3f const gain {1., 0., 0.,
+                              0., 1., 0.,
+                              0., 0., 1.};
 
   sample_lock.lock();
     samples.clear();
-    samples.reserve(static_cast<size_t>(req->duration * (*SensorImuRate) * 1.5));
+    samples.reserve(static_cast<size_t>((*set_acc_bias_seconds) * (*SensorImuRate) * 1.5));
     take_samples = true;
     auto const start = node->get_clock()->now();
   sample_lock.unlock();
 
-  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*req->duration)}});
+  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*(*set_acc_bias_seconds))}});
 
   sample_lock.lock();
     auto const end = node->get_clock()->now();
     take_samples = false;
-    
-    resp->samples_taken = samples.size();
-    resp->elapsed_time = (end - start).seconds();
 
     // Calculate mean of samples
     double bias_x{0.}, bias_y{0.}, bias_z{0.};
@@ -202,22 +210,22 @@ void set_horizontal(
   vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
                               curr.b.y-static_cast<float>(bias_y), 
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
-
-  resp->bias_x = static_cast<double>(curr.b.x) - bias_x;
-  resp->bias_y = static_cast<double>(curr.b.y) - bias_y;
-  resp->bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
-
-  resp->covariance_x = covariance_x;
-  resp->covariance_y = covariance_y;
-  resp->covariance_z = covariance_z;
   
   if (samples.size() < 10) {
-    RCLCPP_ERROR(node->get_logger(),  "Not enough samples taken. Aborting.");
+    RCLCPP_ERROR(node->get_logger(), "Not enough samples taken. Aborting.");
+    RCLCPP_ERROR(node->get_logger(), "Not enough samples taken (<10). Aborting.");
+    resp->message = "Not enough samples taken (<10). Aborting.";
     resp->success = false;
   } else {
+    RCLCPP_INFO(node->get_logger(), "Applying bias correction to vectornav:");
+    RCLCPP_INFO(node->get_logger(), " - Samples taked: %lu (%.2lfs)", samples.size(), (end - start).seconds());
+    RCLCPP_INFO(node->get_logger(), " - Bias:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", bias.x, bias.y, bias.z);
+    RCLCPP_INFO(node->get_logger(), " - Covariance: [x: %7.4lf, y: %7.4lf, z: %7.4lf]", covariance_x, covariance_y, covariance_z);
+    resp->message = "Applying bias correction to vectornav, see log for more info. Please, reset vectornav hardware to avoid angular velocity.";
     resp->success = true;
     vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
     vs_ptr->writeSettings(true);
+    RCLCPP_INFO(node->get_logger(), "Done.");
   }
 }
 
@@ -497,8 +505,12 @@ int main(int argc, char * argv[])
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
   
   // Write bias compensation
-  setHorizontalSrv = node->create_service<vectornav::srv::SetFrameHorizontal>(
-    "~/set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate));
+  if (user_data.acc_bias_enable) {
+    setHorizontalSrv = node->create_service<std_srvs::srv::Trigger>(
+      "~/set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate, &user_data.set_acc_bias_seconds));
+    resetHorizontalSrv = node->create_service<std_srvs::srv::Trigger>(
+      "~/reset_acc_bias", std::bind(reset_horizontal, std::placeholders::_1, std::placeholders::_2, &vs));
+  }
 
   // You spin me right round, baby
   // Right round like a record, baby
@@ -507,11 +519,11 @@ int main(int argc, char * argv[])
 
   // Node has been terminated
   vs.unregisterAsyncPacketReceivedHandler();
-  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*0.5)}});
-  RCLCPP_INFO(node->get_logger(),  "Unregisted the Packet Received Handler");
+  RCLCPP_INFO(node->get_logger(), "Unregisted the packet received handler");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   vs.disconnect();
-  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*0.5)}});
-  RCLCPP_INFO(node->get_logger(),  "%s is disconnected successfully", mn.c_str());
+  RCLCPP_INFO(node->get_logger(), "%s is disconnected successfully", mn.c_str());
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   return 0;
 }
 

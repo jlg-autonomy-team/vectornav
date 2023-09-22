@@ -41,7 +41,7 @@
 #include <vectornav/msg/ins.hpp>
 
 #include <std_srvs/srv/empty.hpp>
-#include <vectornav/srv/set_frame_horizontal.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <mutex>
 
@@ -85,7 +85,8 @@ private:
   rclcpp::Publisher<vectornav::msg::Ins>::SharedPtr pub_ins_{ nullptr };
 
   // Services
-  rclcpp::Service<vectornav::srv::SetFrameHorizontal>::SharedPtr srv_set_acc_bias_{ nullptr };
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_set_acc_bias_{ nullptr };
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_reset_acc_bias_{ nullptr };
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr srv_reset_odom_{ nullptr };
 
   void read_parameters();
@@ -96,12 +97,16 @@ private:
   void configure_device();
 
   std::mutex mtx_samples_;
+  std::mutex service_acc_bias_mtx_;
   struct sample_t {double x, y, z;};
   bool take_samples_{false};
   std::vector<sample_t> samples_{}; 
   void set_acc_bias(
-    const std::shared_ptr<vectornav::srv::SetFrameHorizontal::Request> req,
-    std::shared_ptr<vectornav::srv::SetFrameHorizontal::Response> resp);
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp);
+  void reset_acc_bias(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp);
   void reset_odometry(
     const std::shared_ptr<std_srvs::srv::Empty::Request> req,
     std::shared_ptr<std_srvs::srv::Empty::Response> resp);
