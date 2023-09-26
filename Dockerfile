@@ -1,30 +1,41 @@
-FROM ros:noetic-ros-core
+ARG base_image="robotnik/ros"
+ARG ros_distro="humble"
+ARG version="0.3.1"
+FROM ${base_image}:${ros_distro}-builder-${version} as builder
 
-# change shell to bash
-SHELL ["/bin/bash","-c"]
+# Copy source code
+COPY --chown=${USER_NAME}:${USER_NAME} . ${USER_WORKSPACE}/src/vectornav 
 
-# install build packages
-RUN apt-get update && \
+# Clone dependencies
+RUN vcs import --input src/vectornav/common.repos ./src
+
+# Generate debian packages
+RUN generate_debs.sh
+
+FROM ${base_image}:${ros_distro}-base-${version}
+
+# Mount debian packages from previous stage and install all of them
+USER root
+RUN --mount=type=bind,from=builder,source=${USER_WORKSPACE}/debs,target=/tmp/debs \
+    apt update && \
     apt-get install -y --no-install-recommends \
-        make g++ cmake ros-noetic-tf2 ros-noetic-tf2-geometry-msgs && \
-    rm -rf /var/lib/apt/lists/*
+        /tmp/debs/*.deb \
+    && rm -rf /var/lib/apt/lists/*
 
-# copy vectornav repo to workspace
-COPY . /catkin_ws/src/vectornav
+USER $USER_NAME
 
-# change to workspace
-WORKDIR /catkin_ws
 
-# build workspace
-RUN source /opt/ros/noetic/setup.bash && \
-    catkin_make
+# ENIRONMENT VARIABLES
 
-# create entrypoint script
-RUN printf '#!/bin/bash\nsource /catkin_ws/devel/setup.bash\nexec "$@"' > /entrypoint.bash && \
-    chmod 777 /entrypoint.bash
+ENV STARTUP_TYPE "launch"
+# package to launch
+ENV ROS_BU_PKG "vectornav"
+# script of program to launch with all its arguments
+ENV ROS_BU_LAUNCH "vectornav.launch.py"
 
-# define entrypoint
-ENTRYPOINT ["/entrypoint.bash"]
-
-# define startup default command
-CMD ["roslaunch", "vectornav", "vectornav.launch"]
+### Required nodes to startup
+#### if true check if the NODES_TO_CHECK nodes are started up before starting the program
+ENV CHECK_NODES "false"
+#### space separted node list with full namespace
+ENV NODES_TO_CHECK ""
+ENV HEALTHCHECK_NODES ""
