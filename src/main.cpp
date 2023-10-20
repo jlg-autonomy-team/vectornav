@@ -312,6 +312,7 @@ int main(int argc, char * argv[])
   node->declare_parameter<std::vector<double>>("linear_accel_covariance", {0.0003, 0, 0, 0, 0.0003, 0, 0, 0, 0.0003});
   node->declare_parameter<std::vector<double>>("angular_vel_covariance", {0.02, 0, 0, 0, 0.02, 0, 0, 0, 0.02});
   node->declare_parameter<std::vector<double>>("orientation_covariance", {0.01, 0, 0, 0, 0.01, 0, 0, 0, 0.01});
+  node->declare_parameter<bool>("has_rotation_reference_frame", false);
   node->declare_parameter<std::vector<double>>("rotation_reference_frame", {1., 0, 0, 0, 1., 0, 0, 0, 1.});
 
   node->get_parameter<std::string>("map_frame_id", user_data.map_frame_id);
@@ -333,6 +334,7 @@ int main(int argc, char * argv[])
   node->get_parameter("linear_accel_covariance", user_data.linear_accel_covariance);
   node->get_parameter("angular_vel_covariance", user_data.angular_vel_covariance);
   node->get_parameter("orientation_covariance", user_data.orientation_covariance);
+  node->get_parameter<bool>("has_rotation_reference_frame", has_rotation_reference_frame);
   node->get_parameter("rotation_reference_frame", user_data.rotation_reference_frame);
 
   if (user_data.tf_ned_to_enu && user_data.tf_ned_to_nwu)
