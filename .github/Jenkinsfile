@@ -1,5 +1,3 @@
-rosPipeline(
-  rosdistro: getDistroFromBranch(),
-  upstreamProjects: 'robotnik_msgs/ros-devel',
-  upload: needUpload(),
+buildPackage(
+  upstreamProjects: 'robotnik_common',
 )
