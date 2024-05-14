@@ -42,11 +42,11 @@
 #include "sensor_msgs/NavSatFix.h"
 #include "sensor_msgs/Temperature.h"
 #include "std_srvs/Empty.h"
-#include "vectornav/SetFrameHorizontal.h"
+#include <std_srvs/Trigger.h>
 #include <mutex>
 
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
-ros::ServiceServer resetOdomSrv, setHorizontalSrv;
+ros::ServiceServer resetOdomSrv, setHorizontalSrv, resetHorizontalSrv;
 
 XmlRpc::XmlRpcValue rpc_temp;
 
@@ -155,38 +155,47 @@ bool resetOdom(
   return true;
 }
 
-// Calibrate bias of accelerometer.
-bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectornav::SetFrameHorizontal::Response & res, VnSensor* vs_ptr, int *SensorImuRate)
+std::mutex service_acc_bias_mtx;
+// Restore to zero acc bias of accelerometer.
+bool reset_horizontal(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Response & res, VnSensor* vs_ptr)
 {
-  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
-  ROS_INFO("Set horizontal callback received. Setting horizontal frame.");
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  ROS_INFO("Reset to factory new acceleration bias");
+
   vn::math::mat3f const gain {1., 0., 0.,
                               0., 1., 0.,
                               0., 0., 1.};
-  
-  if (req.reset) {
-    vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
-    vs_ptr->writeSettings(true);
+  vs_ptr->writeAccelerationCompensation(gain, {0., 0., 0.}, true);
+  vs_ptr->writeSettings(true);
 
-    res.success = true;
-    return true;
-  }
+  res.success = true;
+  res.message = "Bias register set to zero. Please, reset vectornav hardware to avoid angular velocity.";
+  ROS_INFO("Done.");
+  return true;
+}
+
+// Calibrate bias of accelerometer.
+bool set_horizontal(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Response & res, VnSensor* vs_ptr, int *SensorImuRate, double* set_acc_bias_seconds)
+{
+  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  ROS_INFO("Set acceleration bias to zero (0.0, 0.0, 9.81)");
+  vn::math::mat3f const gain {1., 0., 0.,
+                              0., 1., 0.,
+                              0., 0., 1.};
 
   sample_lock.lock();
     samples.clear();
-    samples.reserve(static_cast<size_t>(req.duration * (*SensorImuRate) * 1.5));
+    samples.reserve(static_cast<size_t>((*set_acc_bias_seconds) * (*SensorImuRate) * 1.5));
     take_samples = true;
     auto const start = ros::Time::now();
   sample_lock.unlock();
 
-  ros::Duration(req.duration).sleep();
+  ros::Duration(*set_acc_bias_seconds).sleep();
 
   sample_lock.lock();
     auto const end = ros::Time::now();
     take_samples = false;
-    
-    res.samples_taken = samples.size();
-    res.elapsed_time = (end - start).toSec();
 
     // Calculate mean of samples
     double bias_x{0.}, bias_y{0.}, bias_z{0.};
@@ -207,28 +216,26 @@ bool set_horizontal(vectornav::SetFrameHorizontal::Request const & req, vectorna
 
   auto const curr { vs_ptr->readAccelerationCompensation() };
 
-  vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
-                              curr.b.y-static_cast<float>(bias_y), 
+  vn::math::vec3f const bias {curr.b.x-static_cast<float>(bias_x),
+                              curr.b.y+static_cast<float>(bias_y),
                               curr.b.z-static_cast<float>(bias_z-9.80665)};
 
-  res.bias_x = static_cast<double>(curr.b.x) - bias_x;
-  res.bias_y = static_cast<double>(curr.b.y) - bias_y;
-  res.bias_z = static_cast<double>(curr.b.z) - (bias_z-9.80665);
-
-  res.covariance_x = covariance_x;
-  res.covariance_y = covariance_y;
-  res.covariance_z = covariance_z;
-  
   if (samples.size() < 10) {
-    ROS_ERROR("Not enough samples taken. Aborting.");
+    ROS_ERROR("Not enough samples taken (<10). Aborting.");
+    res.message = "Not enough samples taken (<10). Aborting.";
     res.success = false;
     return true;
   } else {
+    ROS_INFO("Applying bias correction to vectornav:");
+    ROS_INFO(" - Samples taked: %d (%.2lfs)", samples.size(), (end - start).toSec());
+    ROS_INFO(" - Bias:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", bias.x, bias.y, bias.z);
+    ROS_INFO(" - Covariance: [x: %7.4lf, y: %7.4lf, z: %7.4lf]", covariance_x, covariance_y, covariance_z);
+    res.message = "Applying bias correction to vectornav, see log for more info. Please, reset vectornav hardware to avoid angular velocity.";
     res.success = true;
     vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
     vs_ptr->writeSettings(true);
+    ROS_INFO("Done.");
   }
-
   return true;
 }
 
@@ -287,6 +294,8 @@ int main(int argc, char * argv[])
   int SensorBaudrate;
   int async_output_rate;
   int imu_output_rate;
+  bool acc_bias_enable;
+  double set_acc_bias_seconds;
 
   // Sensor IMURATE (800Hz by default, used to configure device)
   int SensorImuRate;
@@ -301,12 +310,14 @@ int main(int argc, char * argv[])
   pn.param<std::string>("frame_id", user_data.frame_id, "vectornav");
   pn.param<bool>("tf_ned_to_enu", user_data.tf_ned_to_enu, false);
   pn.param<bool>("frame_based_enu", user_data.frame_based_enu, false);
-  pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, false);
+  pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, true);
   pn.param<bool>("frame_based_nwu", user_data.frame_based_nwu, false);
   pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
+  pn.param<bool>("acc_bias_enable", acc_bias_enable, false);
+  pn.param<double>("set_acc_bias_seconds", set_acc_bias_seconds, 2.5);
   pn.param<int>("serial_baud", SensorBaudrate, 115200);
   pn.param<int>("fixed_imu_rate", SensorImuRate, 800);
   pn.param<int>("max_invalid_packets", max_invalid_packets, 500);
@@ -494,11 +505,15 @@ int main(int argc, char * argv[])
 
   // Register async callback function
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
-  
-  // Write bias compensation
-  setHorizontalSrv = pn.advertiseService<vectornav::SetFrameHorizontal::Request, vectornav::SetFrameHorizontal::Response>(
-    "set_acc_bias", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate));
 
+  if (acc_bias_enable) {
+    // Write bias compensation
+    setHorizontalSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
+      "set_acc_bias", boost::bind(set_horizontal, _1, _2, &vs, &SensorImuRate, &set_acc_bias_seconds));
+
+    resetHorizontalSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
+      "reset_acc_bias", boost::bind(reset_horizontal, _1, _2, &vs));
+  }
 
   // You spin me right round, baby
   // Right round like a record, baby
@@ -582,18 +597,18 @@ bool fill_imu_message(
           msgIMU.linear_acceleration.z = al[2];
         } else {
           // put into ENU - swap X/Y, invert Z
-          quat_msg.x = q[1];
-          quat_msg.y = q[0];
+          quat_msg.x = -q[1];
+          quat_msg.y = -q[0];
           quat_msg.z = -q[2];
           quat_msg.w = q[3];
 
           // Flip x and y then invert z
-          msgIMU.angular_velocity.x = ar[1];
-          msgIMU.angular_velocity.y = ar[0];
+          msgIMU.angular_velocity.x = -ar[1];
+          msgIMU.angular_velocity.y = -ar[0];
           msgIMU.angular_velocity.z = -ar[2];
           // Flip x and y then invert z
-          msgIMU.linear_acceleration.x = al[1];
-          msgIMU.linear_acceleration.y = al[0];
+          msgIMU.linear_acceleration.x = -al[1];
+          msgIMU.linear_acceleration.y = -al[0];
           msgIMU.linear_acceleration.z = -al[2];
 
           if (cd.hasAttitudeUncertainty()) {
@@ -631,18 +646,18 @@ bool fill_imu_message(
           msgIMU.linear_acceleration.z = al[2];
         } else {
           // put into NWU
-          quat_msg.x = q[0];
-          quat_msg.y = -q[1];
+          quat_msg.x = -q[0];
+          quat_msg.y = q[1];
           quat_msg.z = -q[2];
           quat_msg.w = q[3];
 
           // Invert y and z
-          msgIMU.angular_velocity.x = ar[0];
-          msgIMU.angular_velocity.y = -ar[1];
+          msgIMU.angular_velocity.x = -ar[0];
+          msgIMU.angular_velocity.y = ar[1];
           msgIMU.angular_velocity.z = -ar[2];
           // Invert y and z
-          msgIMU.linear_acceleration.x = al[0];
-          msgIMU.linear_acceleration.y = -al[1];
+          msgIMU.linear_acceleration.x = -al[0];
+          msgIMU.linear_acceleration.y = al[1];
           msgIMU.linear_acceleration.z = -al[2];
 
           if (cd.hasAttitudeUncertainty()) {
@@ -790,8 +805,8 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // alternative method for conversion to ENU frame (leads to another result)
       // put into ENU - swap X/Y, invert Z
-      msgOdom.pose.pose.orientation.x = q[1];
-      msgOdom.pose.pose.orientation.y = q[0];
+      msgOdom.pose.pose.orientation.x = -q[1];
+      msgOdom.pose.pose.orientation.y = -q[0];
       msgOdom.pose.pose.orientation.z = -q[2];
       msgOdom.pose.pose.orientation.w = q[3];
     } else if (user_data->tf_ned_to_nwu && user_data->frame_based_nwu) {
@@ -806,8 +821,8 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // alternative method for conversion to ENU frame (leads to another result)
       // put into ENU - swap X/Y, invert Z
-      msgOdom.pose.pose.orientation.x = q[0];
-      msgOdom.pose.pose.orientation.y = -q[1];
+      msgOdom.pose.pose.orientation.x = -q[0];
+      msgOdom.pose.pose.orientation.y = q[1];
       msgOdom.pose.pose.orientation.z = -q[2];
       msgOdom.pose.pose.orientation.w = q[3];
     }
@@ -843,14 +858,14 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // value assignment for conversion by swapping and inverting (not frame_based_enu)
       // Flip x and y then invert z
-      msgOdom.twist.twist.linear.x = vel[1];
-      msgOdom.twist.twist.linear.y = vel[0];
+      msgOdom.twist.twist.linear.x = -vel[1];
+      msgOdom.twist.twist.linear.y = -vel[0];
       msgOdom.twist.twist.linear.z = -vel[2];
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // value assignment for conversion by swapping and inverting (not frame_based_nwu)
       // Invert y and z
-      msgOdom.twist.twist.linear.x = vel[0];
-      msgOdom.twist.twist.linear.y = -vel[1];
+      msgOdom.twist.twist.linear.x = -vel[0];
+      msgOdom.twist.twist.linear.y = vel[1];
       msgOdom.twist.twist.linear.z = -vel[2];
     }
 
@@ -884,14 +899,14 @@ void fill_odom_message(
     } else if (user_data->tf_ned_to_enu && !user_data->frame_based_enu) {
       // value assignment for conversion by swapping and inverting (not frame_based_enu)
       // Flip x and y then invert z
-      msgOdom.twist.twist.angular.x = ar[1];
-      msgOdom.twist.twist.angular.y = ar[0];
+      msgOdom.twist.twist.angular.x = -ar[1];
+      msgOdom.twist.twist.angular.y = -ar[0];
       msgOdom.twist.twist.angular.z = -ar[2];
     } else if (user_data->tf_ned_to_nwu && !user_data->frame_based_nwu) {
       // value assignment for conversion by swapping and inverting (not frame_based_nwu)
       // Invert y and z
-      msgOdom.twist.twist.angular.x = ar[0];
-      msgOdom.twist.twist.angular.y = -ar[1];
+      msgOdom.twist.twist.angular.x = -ar[0];
+      msgOdom.twist.twist.angular.y = ar[1];
       msgOdom.twist.twist.angular.z = -ar[2];
     }
 
@@ -1077,7 +1092,7 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
       }
     }
     lock.unlock();
-    
+
     if ((pkg_count % user_data->output_stride) == 0) {
       // Magnetic Field
       if (pubMag.getNumSubscribers() > 0) {

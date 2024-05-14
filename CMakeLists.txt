@@ -19,11 +19,6 @@ add_message_files(
     Ins.msg
 )
 
-add_service_files(
-    FILES
-    SetFrameHorizontal.srv
-)
-
 generate_messages(
     DEPENDENCIES
     std_msgs
@@ -51,7 +46,7 @@ add_subdirectory(vnproglib-1.2.0.0/cpp)
 ## Your package locations should be listed before other locations
 include_directories(
   include
-  vnproglib-1.2.0.0/cpp/include 
+  vnproglib-1.2.0.0/cpp/include
   ${catkin_INCLUDE_DIRS})
 
 ## Declare a cpp library
