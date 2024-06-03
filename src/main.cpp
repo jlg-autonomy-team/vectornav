@@ -433,10 +433,15 @@ bool reset_sensor(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Res
   ROS_INFO("reset_sensor: Reset sensor");
 
   vs_ptr->reset(true);
+  ROS_INFO("reset_sensor: Done.");
+  // Reinitialize the sensor
+  sleep(2);
+  ROS_WARN("reset_sensor: Reinitializing sensor.");
+  initialize(vs_ptr);
 
   res.success = true;
   res.message = "Reset sensor complete!";
-  ROS_INFO("reset_sensor: Done.");
+  
   return true;
 }
 
