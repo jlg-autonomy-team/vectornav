@@ -46,7 +46,7 @@
 #include <mutex>
 
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
-ros::ServiceServer resetOdomSrv, setHorizontalSrv, resetHorizontalSrv;
+ros::ServiceServer resetOdomSrv, setHorizontalSrv, resetHorizontalSrv, resetSensorSrv;
 
 XmlRpc::XmlRpcValue rpc_temp;
 
@@ -236,6 +236,20 @@ bool set_horizontal(std_srvs::Trigger::Request const & req, std_srvs::Trigger::R
     vs_ptr->writeSettings(true);
     ROS_INFO("Done.");
   }
+  return true;
+}
+
+// Reset the sensor
+bool reset_sensor(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Response & res, VnSensor * vs_ptr)
+{
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  ROS_INFO("reset_sensor: Reset sensor");
+
+  vs_ptr->reset(true);
+
+  res.success = true;
+  res.message = "Reset sensor complete!";
+  ROS_INFO("reset_sensor: Done.");
   return true;
 }
 
@@ -514,6 +528,8 @@ int main(int argc, char * argv[])
     resetHorizontalSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
       "reset_acc_bias", boost::bind(reset_horizontal, _1, _2, &vs));
   }
+  resetSensorSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
+    "reset_sensor", boost::bind(reset_sensor, _1, _2, &vs));
 
   // You spin me right round, baby
   // Right round like a record, baby
