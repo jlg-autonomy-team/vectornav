@@ -66,15 +66,6 @@ using namespace vn::sensors;
 using namespace vn::protocol::uart;
 using namespace vn::xplat;
 
-// Method declarations for future use.
-void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index);
-bool ValidateQuaternion(vec4f q);
-bool ValidateVector(vec3f v);
-int invalid_data = 0;
-// Number of consecutive invalid data packets allowed before shutting node down.
-int max_invalid_packets = -1;
-// Save newest timestamp to avoid publishing older messages
-ros::Time newest_timestamp;
 
 // Custom user data to pass to packet callback function
 struct UserData
@@ -121,6 +112,34 @@ struct UserData
   unsigned int output_stride;
 };
 
+// Method declarations for future use.
+void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index);
+bool ValidateQuaternion(vec4f q);
+bool ValidateVector(vec3f v);
+int invalid_data = 0;
+// Number of consecutive invalid data packets allowed before shutting node down.
+int max_invalid_packets = -1;
+// Save newest timestamp to avoid publishing older messages
+ros::Time newest_timestamp;
+
+// keeping all information passed to callback
+UserData user_data;
+// Serial Port Settings
+string SensorPort;
+int SensorBaudrate;
+int async_output_rate;
+int imu_output_rate;
+bool acc_bias_enable;
+double set_acc_bias_seconds;
+string model_number;
+
+// Sensor IMURATE (800Hz by default, used to configure device)
+int SensorImuRate;
+
+// Indicates whether a rotation reference frame has been read
+bool has_rotation_reference_frame;
+
+bool optimize_serial_communication(std::string portName);
 bool validateSensorTimestamp(const double sensor_time, UserData * user_data);
 
 // Basic loop so we can initilize our covariance parameters above
@@ -144,6 +163,174 @@ boost::array<double, 9ul> setRotationFrame(XmlRpc::XmlRpcValue rpc){
   // as we are using now a 3x3 matrix, as in the covariance reading,
   // and that method was inherited, reuse it
   return setCov(rpc);
+}
+
+// Initialize the sensor and communication
+bool initialize(VnSensor * vs_ptr)
+{
+  ROS_INFO("initialize");
+
+  newest_timestamp = ros::Time::now();
+
+   ROS_INFO("Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
+
+  // try to optimize the serial port
+  optimize_serial_communication(SensorPort);
+
+  // Default baudrate variable
+  int defaultBaudrate;
+  // Run through all of the acceptable baud rates until we are connected
+  // Looping in case someone has changed the default
+  bool baudSet = false;
+  // Lets add the set baudrate to the top of the list, so that it will try
+  // to connect with that value first (speed initialization up)
+  std::vector<unsigned int> supportedBaudrates = vs_ptr->supportedBaudrates();
+  supportedBaudrates.insert(supportedBaudrates.begin(), SensorBaudrate);
+  while (!baudSet) {
+    // Make this variable only accessible in the while loop
+    static int i = 0;
+    defaultBaudrate = supportedBaudrates[i];
+    ROS_INFO("Connecting with default at %d", defaultBaudrate);
+    // Default response was too low and retransmit time was too long by default.
+    // They would cause errors
+    vs_ptr->setResponseTimeoutMs(1000);  // Wait for up to 1000 ms for response
+    vs_ptr->setRetransmitDelayMs(50);    // Retransmit every 50 ms
+
+    // Acceptable baud rates 9600, 19200, 38400, 57600, 128000, 115200, 230400, 460800, 921600
+    // Data sheet says 128000 is a valid baud rate. It doesn't work with the VN100 so it is excluded.
+    // All other values seem to work fine.
+    try {
+      // Connect to sensor at it's default rate
+      if (defaultBaudrate != 128000 && SensorBaudrate != 128000) {
+        vs_ptr->connect(SensorPort, defaultBaudrate);
+        // Issues a change baudrate to the VectorNav sensor and then
+        // reconnects the attached serial port at the new baudrate.
+        vs_ptr->changeBaudRate(SensorBaudrate);
+        // Only makes it here once we have the default correct
+        ROS_INFO("Connected baud rate is %d", vs_ptr->baudrate());
+        baudSet = true;
+      }
+    }
+    // Catch all oddities
+    catch (...) {
+      // Disconnect if we had the wrong default and we were connected
+      vs_ptr->disconnect();
+      ros::Duration(0.2).sleep();
+    }
+    // Increment the default iterator
+    i++;
+    // There are only 9 available data rates, if no connection
+    // made yet possibly a hardware malfunction?
+    if (i > 8) {
+      break;
+    }
+  }
+
+  // Now we verify connection (Should be good if we made it this far)
+  if (vs_ptr->verifySensorConnectivity()) {
+    ROS_INFO("Device connection established");
+  } else {
+    ROS_ERROR("No device communication");
+    ROS_WARN("Please input a valid baud rate. Valid are:");
+    ROS_WARN("9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
+    ROS_WARN("With the test IMU 128000 did not work, all others worked fine.");
+  }
+  // Query the sensor's model number.
+  model_number = vs_ptr->readModelNumber();
+  string fv = vs_ptr->readFirmwareVersion();
+  uint32_t hv = vs_ptr->readHardwareRevision();
+  uint32_t sn = vs_ptr->readSerialNumber();
+  ROS_INFO("Model Number: %s, Firmware Version: %s", model_number.c_str(), fv.c_str());
+  ROS_INFO("Hardware Revision : %d, Serial Number : %d", hv, sn);
+
+  // calculate the least common multiple of the two rate and assure it is a
+  // valid package rate, also calculate the imu and output strides
+  int package_rate = 0;
+  for (int allowed_rate : {1, 2, 4, 5, 10, 20, 25, 40, 50, 100, 200, 0}) {
+    package_rate = allowed_rate;
+    if ((package_rate % async_output_rate) == 0 && (package_rate % imu_output_rate) == 0) break;
+  }
+  ROS_ASSERT_MSG(
+    package_rate,
+    "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
+    "200 Hz",
+    imu_output_rate, async_output_rate);
+  user_data.imu_stride = package_rate / imu_output_rate;
+  user_data.output_stride = package_rate / async_output_rate;
+  ROS_INFO("Package Receive Rate: %d Hz", package_rate);
+  ROS_INFO("General Publish Rate: %d Hz", async_output_rate);
+  ROS_INFO("IMU Publish Rate: %d Hz", imu_output_rate);
+
+  // Arbitrary value that indicates the maximum expected time between consecutive IMU messages
+  user_data.maximum_imu_timestamp_difference = (1 / static_cast<double>(imu_output_rate)) * 10;
+
+  // Set the device info for passing to the packet callback function
+  user_data.device_family = vs_ptr->determineDeviceFamily();
+
+  // Make sure no generic async output is registered
+  vs_ptr->writeAsyncDataOutputType(VNOFF);
+
+  // Configure binary output message
+  BinaryOutputRegister bor(
+    ASYNCMODE_PORT1,
+    SensorImuRate / package_rate,  // update rate [ms]
+    COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
+      COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |
+      (user_data.adjust_ros_timestamp ? COMMONGROUP_TIMESTARTUP : 0),
+    TIMEGROUP_NONE | TIMEGROUP_GPSTOW | TIMEGROUP_GPSWEEK | TIMEGROUP_TIMEUTC, IMUGROUP_NONE,
+    GPSGROUP_NONE,
+    ATTITUDEGROUP_YPRU,  //<-- returning yaw pitch roll uncertainties
+    INSGROUP_INSSTATUS | INSGROUP_POSECEF | INSGROUP_VELBODY | INSGROUP_ACCELECEF |
+      INSGROUP_VELNED | INSGROUP_POSU | INSGROUP_VELU,
+    GPSGROUP_NONE);
+
+  // An empty output register for disabling output 2 and 3 if previously set
+  BinaryOutputRegister bor_none(
+    0, 1, COMMONGROUP_NONE, TIMEGROUP_NONE, IMUGROUP_NONE, GPSGROUP_NONE, ATTITUDEGROUP_NONE,
+    INSGROUP_NONE, GPSGROUP_NONE);
+
+  vs_ptr->writeBinaryOutput1(bor);
+  vs_ptr->writeBinaryOutput2(bor_none);
+  vs_ptr->writeBinaryOutput3(bor_none);
+
+  // Setting reference frame
+  vn::math::mat3f current_rotation_reference_frame;
+  current_rotation_reference_frame = vs_ptr->readReferenceFrameRotation();
+  ROS_INFO_STREAM("Current rotation reference frame: " << current_rotation_reference_frame);
+
+  if (has_rotation_reference_frame == true) {
+    vn::math::mat3f matrix_rotation_reference_frame;
+    matrix_rotation_reference_frame.e00 = user_data.rotation_reference_frame[0];
+    matrix_rotation_reference_frame.e01 = user_data.rotation_reference_frame[1];
+    matrix_rotation_reference_frame.e02 = user_data.rotation_reference_frame[2];
+    matrix_rotation_reference_frame.e10 = user_data.rotation_reference_frame[3];
+    matrix_rotation_reference_frame.e11 = user_data.rotation_reference_frame[4];
+    matrix_rotation_reference_frame.e12 = user_data.rotation_reference_frame[5];
+    matrix_rotation_reference_frame.e20 = user_data.rotation_reference_frame[6];
+    matrix_rotation_reference_frame.e21 = user_data.rotation_reference_frame[7];
+    matrix_rotation_reference_frame.e22 = user_data.rotation_reference_frame[8];
+
+    // Check diagonal to determine if the matrix is different, the rest of the values should be 0
+    // There is no method to compare matrices directly
+    if (current_rotation_reference_frame.e00 != matrix_rotation_reference_frame.e00
+      || current_rotation_reference_frame.e11 != matrix_rotation_reference_frame.e11
+      || current_rotation_reference_frame.e22 != matrix_rotation_reference_frame.e22)
+    {
+      ROS_INFO_STREAM("Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
+      vs_ptr->writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
+      current_rotation_reference_frame = vs_ptr->readReferenceFrameRotation();
+      ROS_INFO_STREAM("New rotation reference frame: " << current_rotation_reference_frame);
+      ROS_INFO_STREAM("Restarting device to save new reference frame");
+      vs_ptr->writeSettings(true);
+      vs_ptr->reset();
+    }
+
+  }
+
+  // Register async callback function
+  vs_ptr->registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
+
+  return true;
 }
 
 // Reset initial position to current position
@@ -284,13 +471,13 @@ bool optimize_serial_communication(str::string portName) { return true; }
 
 int main(int argc, char * argv[])
 {
-  // keeping all information passed to callback
-  UserData user_data;
-
   // ROS node init
   ros::init(argc, argv, "vectornav");
   ros::NodeHandle n;
   ros::NodeHandle pn("~");
+  has_rotation_reference_frame = false;
+  // Create a VnSensor object and connect to sensor
+  VnSensor vs;
 
   pubIMU = n.advertise<sensor_msgs::Imu>("imu/data", 1000);
   pubMag = n.advertise<sensor_msgs::MagneticField>("imu/mag", 1000);
@@ -303,21 +490,6 @@ int main(int argc, char * argv[])
   resetOdomSrv = n.advertiseService<std_srvs::Empty::Request, std_srvs::Empty::Response>(
     "reset_odom", boost::bind(&resetOdom, _1, _2, &user_data));
 
-  // Serial Port Settings
-  string SensorPort;
-  int SensorBaudrate;
-  int async_output_rate;
-  int imu_output_rate;
-  bool acc_bias_enable;
-  double set_acc_bias_seconds;
-
-  // Sensor IMURATE (800Hz by default, used to configure device)
-  int SensorImuRate;
-
-  // Indicates whether a rotation reference frame has been read
-  bool has_rotation_reference_frame = false;
-
-  newest_timestamp = ros::Time::now();
 
   // Load all params
   pn.param<std::string>("map_frame_id", user_data.map_frame_id, "map");
@@ -359,166 +531,8 @@ int main(int argc, char * argv[])
     ros::shutdown();
   }
 
-  ROS_INFO("Connecting to : %s @ %d Baud", SensorPort.c_str(), SensorBaudrate);
-
-  // try to optimize the serial port
-  optimize_serial_communication(SensorPort);
-
-  // Create a VnSensor object and connect to sensor
-  VnSensor vs;
-
-  // Default baudrate variable
-  int defaultBaudrate;
-  // Run through all of the acceptable baud rates until we are connected
-  // Looping in case someone has changed the default
-  bool baudSet = false;
-  // Lets add the set baudrate to the top of the list, so that it will try
-  // to connect with that value first (speed initialization up)
-  std::vector<unsigned int> supportedBaudrates = vs.supportedBaudrates();
-  supportedBaudrates.insert(supportedBaudrates.begin(), SensorBaudrate);
-  while (!baudSet) {
-    // Make this variable only accessible in the while loop
-    static int i = 0;
-    defaultBaudrate = supportedBaudrates[i];
-    ROS_INFO("Connecting with default at %d", defaultBaudrate);
-    // Default response was too low and retransmit time was too long by default.
-    // They would cause errors
-    vs.setResponseTimeoutMs(1000);  // Wait for up to 1000 ms for response
-    vs.setRetransmitDelayMs(50);    // Retransmit every 50 ms
-
-    // Acceptable baud rates 9600, 19200, 38400, 57600, 128000, 115200, 230400, 460800, 921600
-    // Data sheet says 128000 is a valid baud rate. It doesn't work with the VN100 so it is excluded.
-    // All other values seem to work fine.
-    try {
-      // Connect to sensor at it's default rate
-      if (defaultBaudrate != 128000 && SensorBaudrate != 128000) {
-        vs.connect(SensorPort, defaultBaudrate);
-        // Issues a change baudrate to the VectorNav sensor and then
-        // reconnects the attached serial port at the new baudrate.
-        vs.changeBaudRate(SensorBaudrate);
-        // Only makes it here once we have the default correct
-        ROS_INFO("Connected baud rate is %d", vs.baudrate());
-        baudSet = true;
-      }
-    }
-    // Catch all oddities
-    catch (...) {
-      // Disconnect if we had the wrong default and we were connected
-      vs.disconnect();
-      ros::Duration(0.2).sleep();
-    }
-    // Increment the default iterator
-    i++;
-    // There are only 9 available data rates, if no connection
-    // made yet possibly a hardware malfunction?
-    if (i > 8) {
-      break;
-    }
-  }
-
-  // Now we verify connection (Should be good if we made it this far)
-  if (vs.verifySensorConnectivity()) {
-    ROS_INFO("Device connection established");
-  } else {
-    ROS_ERROR("No device communication");
-    ROS_WARN("Please input a valid baud rate. Valid are:");
-    ROS_WARN("9600, 19200, 38400, 57600, 115200, 128000, 230400, 460800, 921600");
-    ROS_WARN("With the test IMU 128000 did not work, all others worked fine.");
-  }
-  // Query the sensor's model number.
-  string mn = vs.readModelNumber();
-  string fv = vs.readFirmwareVersion();
-  uint32_t hv = vs.readHardwareRevision();
-  uint32_t sn = vs.readSerialNumber();
-  ROS_INFO("Model Number: %s, Firmware Version: %s", mn.c_str(), fv.c_str());
-  ROS_INFO("Hardware Revision : %d, Serial Number : %d", hv, sn);
-
-  // calculate the least common multiple of the two rate and assure it is a
-  // valid package rate, also calculate the imu and output strides
-  int package_rate = 0;
-  for (int allowed_rate : {1, 2, 4, 5, 10, 20, 25, 40, 50, 100, 200, 0}) {
-    package_rate = allowed_rate;
-    if ((package_rate % async_output_rate) == 0 && (package_rate % imu_output_rate) == 0) break;
-  }
-  ROS_ASSERT_MSG(
-    package_rate,
-    "imu_output_rate (%d) or async_output_rate (%d) is not in 1, 2, 4, 5, 10, 20, 25, 40, 50, 100, "
-    "200 Hz",
-    imu_output_rate, async_output_rate);
-  user_data.imu_stride = package_rate / imu_output_rate;
-  user_data.output_stride = package_rate / async_output_rate;
-  ROS_INFO("Package Receive Rate: %d Hz", package_rate);
-  ROS_INFO("General Publish Rate: %d Hz", async_output_rate);
-  ROS_INFO("IMU Publish Rate: %d Hz", imu_output_rate);
-
-  // Arbitrary value that indicates the maximum expected time between consecutive IMU messages
-  user_data.maximum_imu_timestamp_difference = (1 / static_cast<double>(imu_output_rate)) * 10;
-
-  // Set the device info for passing to the packet callback function
-  user_data.device_family = vs.determineDeviceFamily();
-
-  // Make sure no generic async output is registered
-  vs.writeAsyncDataOutputType(VNOFF);
-
-  // Configure binary output message
-  BinaryOutputRegister bor(
-    ASYNCMODE_PORT1,
-    SensorImuRate / package_rate,  // update rate [ms]
-    COMMONGROUP_QUATERNION | COMMONGROUP_YAWPITCHROLL | COMMONGROUP_ANGULARRATE |
-      COMMONGROUP_POSITION | COMMONGROUP_ACCEL | COMMONGROUP_MAGPRES |
-      (user_data.adjust_ros_timestamp ? COMMONGROUP_TIMESTARTUP : 0),
-    TIMEGROUP_NONE | TIMEGROUP_GPSTOW | TIMEGROUP_GPSWEEK | TIMEGROUP_TIMEUTC, IMUGROUP_NONE,
-    GPSGROUP_NONE,
-    ATTITUDEGROUP_YPRU,  //<-- returning yaw pitch roll uncertainties
-    INSGROUP_INSSTATUS | INSGROUP_POSECEF | INSGROUP_VELBODY | INSGROUP_ACCELECEF |
-      INSGROUP_VELNED | INSGROUP_POSU | INSGROUP_VELU,
-    GPSGROUP_NONE);
-
-  // An empty output register for disabling output 2 and 3 if previously set
-  BinaryOutputRegister bor_none(
-    0, 1, COMMONGROUP_NONE, TIMEGROUP_NONE, IMUGROUP_NONE, GPSGROUP_NONE, ATTITUDEGROUP_NONE,
-    INSGROUP_NONE, GPSGROUP_NONE);
-
-  vs.writeBinaryOutput1(bor);
-  vs.writeBinaryOutput2(bor_none);
-  vs.writeBinaryOutput3(bor_none);
-
-  // Setting reference frame
-  vn::math::mat3f current_rotation_reference_frame;
-  current_rotation_reference_frame = vs.readReferenceFrameRotation();
-  ROS_INFO_STREAM("Current rotation reference frame: " << current_rotation_reference_frame);
-
-  if (has_rotation_reference_frame == true) {
-    vn::math::mat3f matrix_rotation_reference_frame;
-    matrix_rotation_reference_frame.e00 = user_data.rotation_reference_frame[0];
-    matrix_rotation_reference_frame.e01 = user_data.rotation_reference_frame[1];
-    matrix_rotation_reference_frame.e02 = user_data.rotation_reference_frame[2];
-    matrix_rotation_reference_frame.e10 = user_data.rotation_reference_frame[3];
-    matrix_rotation_reference_frame.e11 = user_data.rotation_reference_frame[4];
-    matrix_rotation_reference_frame.e12 = user_data.rotation_reference_frame[5];
-    matrix_rotation_reference_frame.e20 = user_data.rotation_reference_frame[6];
-    matrix_rotation_reference_frame.e21 = user_data.rotation_reference_frame[7];
-    matrix_rotation_reference_frame.e22 = user_data.rotation_reference_frame[8];
-
-    // Check diagonal to determine if the matrix is different, the rest of the values should be 0
-    // There is no method to compare matrices directly
-    if (current_rotation_reference_frame.e00 != matrix_rotation_reference_frame.e00
-      || current_rotation_reference_frame.e11 != matrix_rotation_reference_frame.e11
-      || current_rotation_reference_frame.e22 != matrix_rotation_reference_frame.e22)
-    {
-      ROS_INFO_STREAM("Current rotation reference frame is different from the desired one: " << matrix_rotation_reference_frame);
-      vs.writeReferenceFrameRotation(matrix_rotation_reference_frame, true);
-      current_rotation_reference_frame = vs.readReferenceFrameRotation();
-      ROS_INFO_STREAM("New rotation reference frame: " << current_rotation_reference_frame);
-      ROS_INFO_STREAM("Restarting device to save new reference frame");
-      vs.writeSettings(true);
-      vs.reset();
-    }
-
-  }
-
-  // Register async callback function
-  vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
+  initialize(&vs);
+ 
 
   if (acc_bias_enable) {
     // Write bias compensation
@@ -544,7 +558,7 @@ int main(int argc, char * argv[])
   ROS_INFO("Unregisted the Packet Received Handler");
   vs.disconnect();
   ros::Duration(0.5).sleep();
-  ROS_INFO("%s is disconnected successfully", mn.c_str());
+  ROS_INFO("%s is disconnected successfully", model_number.c_str());
   return 0;
 }
 
