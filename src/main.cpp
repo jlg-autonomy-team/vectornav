@@ -46,7 +46,7 @@
 #include <mutex>
 
 ros::Publisher pubIMU, pubMag, pubGPS, pubOdom, pubTemp, pubPres, pubIns;
-ros::ServiceServer resetOdomSrv, setHorizontalSrv, resetHorizontalSrv, resetSensorSrv;
+ros::ServiceServer resetOdomSrv, setHorizontalSrv, resetHorizontalSrv, resetSensorSrv, setGyroBiasSrv;
 
 XmlRpc::XmlRpcValue rpc_temp;
 
@@ -445,6 +445,22 @@ bool reset_sensor(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Res
   return true;
 }
 
+// Reset the sensor
+bool set_gyro_bias(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Response & res, VnSensor * vs_ptr)
+{
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  ROS_INFO("set_gyro_bias: init");
+
+  vs_ptr->setGyroBias(true);
+  ROS_INFO("set_gyro_bias: Done.");
+ 
+
+  res.success = true;
+  res.message = "set_gyro_bias: sensor complete!";
+  
+  return true;
+}
+
 // Assure that the serial port is set to async low latency in order to reduce delays and package pilup.
 // These changes will stay effective until the device is unplugged
 #if __linux__ || __CYGWIN__
@@ -549,6 +565,9 @@ int main(int argc, char * argv[])
   }
   resetSensorSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
     "reset_sensor", boost::bind(reset_sensor, _1, _2, &vs));
+
+  setGyroBiasSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
+    "set_", boost::bind(set_gyro_bias, _1, _2, &vs));
 
   // You spin me right round, baby
   // Right round like a record, baby
