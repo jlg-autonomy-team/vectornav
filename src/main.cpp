@@ -567,7 +567,7 @@ int main(int argc, char * argv[])
     "reset_sensor", boost::bind(reset_sensor, _1, _2, &vs));
 
   setGyroBiasSrv = pn.advertiseService<std_srvs::Trigger::Request, std_srvs::Trigger::Response>(
-    "set_", boost::bind(set_gyro_bias, _1, _2, &vs));
+    "set_gyro_bias", boost::bind(set_gyro_bias, _1, _2, &vs));
 
   // You spin me right round, baby
   // Right round like a record, baby
