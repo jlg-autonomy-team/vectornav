@@ -452,6 +452,7 @@ bool set_gyro_bias(std_srvs::Trigger::Request const & req, std_srvs::Trigger::Re
   ROS_INFO("set_gyro_bias: init");
 
   vs_ptr->setGyroBias(true);
+  vs_ptr->writeSettings(true);
   ROS_INFO("set_gyro_bias: Done.");
  
 
