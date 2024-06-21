@@ -139,6 +139,8 @@ int SensorImuRate;
 // Indicates whether a rotation reference frame has been read
 bool has_rotation_reference_frame;
 
+bool block_pitch_roll = false;
+
 bool optimize_serial_communication(std::string portName);
 bool validateSensorTimestamp(const double sensor_time, UserData * user_data);
 
@@ -521,6 +523,7 @@ int main(int argc, char * argv[])
   pn.param<bool>("tf_ned_to_nwu", user_data.tf_ned_to_nwu, true);
   pn.param<bool>("frame_based_nwu", user_data.frame_based_nwu, false);
   pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
+  pn.param<bool>("block_pitch_roll", block_pitch_roll, false);
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
@@ -1141,7 +1144,18 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
       if (fill_imu_message(msgIMU, cd, time, user_data) == true)
       {
         if ((pkg_count % user_data->imu_stride) == 0)
+        {
+          if (block_pitch_roll == true)
+          {
+            // ROS_INFO_THROTTLE(1,"Blocking pitch and roll");
+            msgIMU.orientation.x = 0.0;
+            msgIMU.orientation.y = 0.0;
+            msgIMU.angular_velocity.x = 0.0;
+            msgIMU.angular_velocity.y = 0.0;
+          }
           pubIMU.publish(msgIMU);
+        }
+          
         if (take_samples)
           samples.push_back({msgIMU.linear_acceleration.x, msgIMU.linear_acceleration.y, msgIMU.linear_acceleration.z});
       }
