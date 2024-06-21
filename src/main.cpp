@@ -140,6 +140,7 @@ int SensorImuRate;
 bool has_rotation_reference_frame;
 
 bool block_pitch_roll = false;
+bool block_acceleration_z = false;
 
 bool optimize_serial_communication(std::string portName);
 bool validateSensorTimestamp(const double sensor_time, UserData * user_data);
@@ -524,6 +525,7 @@ int main(int argc, char * argv[])
   pn.param<bool>("frame_based_nwu", user_data.frame_based_nwu, false);
   pn.param<bool>("adjust_ros_timestamp", user_data.adjust_ros_timestamp, false);
   pn.param<bool>("block_pitch_roll", block_pitch_roll, false);
+  pn.param<bool>("block_acceleration_z", block_acceleration_z, false);
   pn.param<int>("async_output_rate", async_output_rate, 40);
   pn.param<int>("imu_output_rate", imu_output_rate, async_output_rate);
   pn.param<std::string>("serial_port", SensorPort, "/dev/ttyUSB0");
@@ -1152,6 +1154,11 @@ void BinaryAsyncMessageReceived(void * userData, Packet & p, size_t index)
             msgIMU.orientation.y = 0.0;
             msgIMU.angular_velocity.x = 0.0;
             msgIMU.angular_velocity.y = 0.0;
+          }
+          if (block_acceleration_z == true)
+          {
+            //ROS_INFO_THROTTLE(1,"Blocking acceleration z");
+            msgIMU.linear_acceleration.z = 9.81;
           }
           pubIMU.publish(msgIMU);
         }
