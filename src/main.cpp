@@ -166,7 +166,7 @@ void reset_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req
 
 // Calibrate bias of accelerometer.
 void set_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> resp, VnSensor* vs_ptr, int *SensorImuRate, double* set_acc_bias_seconds)
+    std::shared_ptr<std_srvs::srv::Trigger::Response> resp, VnSensor* vs_ptr, int *SensorImuRate, double* set_acc_bias_seconds, int frame)
 {
   std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
   std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
@@ -206,10 +206,19 @@ void set_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
   sample_lock.unlock();
 
   auto const curr { vs_ptr->readAccelerationCompensation() };
-
-  vn::math::vec3f const bias {curr.b.x+static_cast<float>(bias_x), 
-                              curr.b.y-static_cast<float>(bias_y), 
-                              curr.b.z-static_cast<float>(bias_z-9.80665)};
+  RCLCPP_INFO(node->get_logger(), " - Previous Bias:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", curr.b.x, curr.b.y, curr.b.z);
+  RCLCPP_INFO(node->get_logger(), " - Bias before being set:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", bias_x, bias_y, bias_z);
+ vn::math::vec3f bias;
+  if(frame == 2) { 
+   bias = {curr.b.x+static_cast<float>(bias_x), 
+          curr.b.y-static_cast<float>(bias_y), 
+          curr.b.z-static_cast<float>(bias_z-9.80665)};
+  }
+  if(frame == 1) { 
+   bias = {curr.b.x + static_cast<float>(bias_y),
+          curr.b.y + static_cast<float>(bias_x),
+          curr.b.z - static_cast<float>(bias_z-9.80665)};
+  }
   
   if (samples.size() < 10) {
     RCLCPP_ERROR(node->get_logger(), "Not enough samples taken. Aborting.");
@@ -223,6 +232,79 @@ void set_horizontal(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
     RCLCPP_INFO(node->get_logger(), " - Covariance: [x: %7.4lf, y: %7.4lf, z: %7.4lf]", covariance_x, covariance_y, covariance_z);
     resp->message = "Applying bias correction to vectornav, see log for more info. Please, reset vectornav hardware to avoid angular velocity.";
     resp->success = true;
+    vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
+    vs_ptr->writeSettings(true);
+    RCLCPP_INFO(node->get_logger(), "Done.");
+  }
+}
+
+// Calibrate bias of accelerometer at startup.
+void set_horizontal_startup(rclcpp::Node::SharedPtr node, VnSensor* vs_ptr, int *SensorImuRate, double* set_acc_bias_seconds, int frame)
+{ 
+  std::unique_lock<std::mutex> sample_lock(mtx_samples, std::defer_lock);
+  std::unique_lock<std::mutex> service_lock(service_acc_bias_mtx);
+  RCLCPP_INFO(node->get_logger(), "Set acceleration bias to zero (0.0, 0.0, 9.81)");
+  vn::math::mat3f const gain {1., 0., 0.,
+                              0., 1., 0.,
+                              0., 0., 1.};
+
+  sample_lock.lock();
+    samples.clear();
+    samples.reserve(static_cast<size_t>((*set_acc_bias_seconds) * (*SensorImuRate) * 1.5));
+    take_samples = true;
+    auto const start = node->get_clock()->now();
+  sample_lock.unlock();
+
+  node->get_clock()->sleep_for(rclcpp::Duration{std::chrono::microseconds{static_cast<uint64_t>(1e6*(*set_acc_bias_seconds))}});
+
+  sample_lock.lock();
+    auto const end = node->get_clock()->now();
+    take_samples = false;
+
+    // Calculate mean of samples
+    double bias_x{0.}, bias_y{0.}, bias_z{0.};
+    for (auto const & sample : samples) {
+      bias_x += sample.x; bias_y += sample.y; bias_z += sample.z;
+    }
+    bias_x /= samples.size(); bias_y /= samples.size(); bias_z /= samples.size();
+
+    // Calculate covariance of samples
+    double covariance_x{0.}, covariance_y{0.}, covariance_z{0.};
+    for (auto const & sample : samples) {
+      covariance_x += (sample.x - bias_x) * (sample.x - bias_x);
+      covariance_y += (sample.y - bias_y) * (sample.y - bias_y);
+      covariance_z += (sample.z - bias_z) * (sample.z - bias_z);
+    }
+    covariance_x /= samples.size(); covariance_y /= samples.size(); covariance_z /= samples.size();
+  sample_lock.unlock();
+
+  auto const curr { vs_ptr->readAccelerationCompensation() };
+  RCLCPP_INFO(node->get_logger(), " - Previous Bias:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", curr.b.x, curr.b.y, curr.b.z);
+  RCLCPP_INFO(node->get_logger(), " - Bias before being set:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", bias_x, bias_y, bias_z);
+ vn::math::vec3f bias;
+  if(frame == 2) { 
+   bias = {curr.b.x+static_cast<float>(bias_x), 
+          curr.b.y-static_cast<float>(bias_y), 
+          curr.b.z-static_cast<float>(bias_z-9.80665)};
+  }
+  if(frame == 1) { 
+   bias = {curr.b.x + static_cast<float>(bias_y),
+          curr.b.y + static_cast<float>(bias_x),
+          curr.b.z - static_cast<float>(bias_z-9.80665)};
+  }
+  
+  if (samples.size() < 10) {
+    RCLCPP_ERROR(node->get_logger(), "Not enough samples taken. Aborting.");
+    RCLCPP_ERROR(node->get_logger(), "Not enough samples taken (<10). Aborting.");
+    //resp->message = "Not enough samples taken (<10). Aborting.";
+    //resp->success = false;
+  } else {
+    RCLCPP_INFO(node->get_logger(), "Applying bias correction to vectornav:");
+    RCLCPP_INFO(node->get_logger(), " - Samples taked: %lu (%.2lfs)", samples.size(), (end - start).seconds());
+    RCLCPP_INFO(node->get_logger(), " - Bias:       [x: %7.4lf, y: %7.4lf, z: %7.4lf]", bias.x, bias.y, bias.z);
+    RCLCPP_INFO(node->get_logger(), " - Covariance: [x: %7.4lf, y: %7.4lf, z: %7.4lf]", covariance_x, covariance_y, covariance_z);
+    //resp->message = "Applying bias correction to vectornav, see log for more info. Please, reset vectornav hardware to avoid angular velocity.";
+    //resp->success = true;
     vs_ptr->writeAccelerationCompensation(gain, {bias.x, bias.y, bias.z}, true);
     vs_ptr->writeSettings(true);
     RCLCPP_INFO(node->get_logger(), "Done.");
@@ -505,14 +587,22 @@ int main(int argc, char * argv[])
 
   // Register async callback function
   vs.registerAsyncPacketReceivedHandler(&user_data, BinaryAsyncMessageReceived);
-  
+  int frame = 0;
+  if(user_data.tf_ned_to_enu) { 
+    frame = 1;
+  }
+  if(user_data.tf_ned_to_nwu) { 
+    frame = 2;
+  }
   // Write bias compensation
   if (user_data.acc_bias_enable) {
     setHorizontalSrv = node->create_service<std_srvs::srv::Trigger>(
-      "~/set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate, &user_data.set_acc_bias_seconds));
+      "~/set_acc_bias", std::bind(set_horizontal, std::placeholders::_1, std::placeholders::_2, &vs, &SensorImuRate, &user_data.set_acc_bias_seconds, frame));
     resetHorizontalSrv = node->create_service<std_srvs::srv::Trigger>(
       "~/reset_acc_bias", std::bind(reset_horizontal, std::placeholders::_1, std::placeholders::_2, &vs));
   }
+
+  set_horizontal_startup(node, &vs, &SensorImuRate, &user_data.set_acc_bias_seconds, frame);
 
   // You spin me right round, baby
   // Right round like a record, baby
@@ -688,6 +778,9 @@ bool fill_imu_message(
       std::copy(user_data->angular_vel_covariance.begin(),
         user_data->angular_vel_covariance.end(),
         msgIMU.angular_velocity_covariance.begin());
+      std::copy(user_data->linear_accel_covariance.begin(),
+        user_data->linear_accel_covariance.end(),
+        msgIMU.linear_acceleration_covariance.begin());
     }
     return true;
   }
