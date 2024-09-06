@@ -1,6 +1,6 @@
 ARG base_image="robotnik/ros"
 ARG ros_distro="humble"
-ARG version="0.3.1"
+ARG version="0.5.0"
 FROM ${base_image}:${ros_distro}-builder-${version} as builder
 
 # Copy source code
